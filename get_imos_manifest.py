@@ -1,49 +1,53 @@
 #!/usr/bin/env python3
-"""
-Finds the previous day's S3 Inventory manifest for the IMOS daily
-whole-bucket inventory, downloads it, then downloads and decompresses
-every data file it lists.
-Requires: boto3 (pip install boto3 --break-system-packages)
-"""
+# ------------------------------------------------------------------
+#- IMPLEMENTATION
+#- author      Hannes Hollmann, National Computational Infrastructure
+#- license     GNU General Public License
+# ------------------------------------------------------------------
+# SYNOPSIS
+#    get_imos_manifest.py
+#
+# DESCRIPTION
+#    Finds the previous day's S3 Inventory manifest for the IMOS daily
+#    whole-bucket inventory, downloads it, then downloads and decompresses
+#    every data file it lists into a dated directory under MANIFEST_MAIN
+#    (config.py). This is stage 1 of the pipeline — its output feeds
+#    compare_manifests.py.
+#
+#    Also prunes old dated inventory directories, keeping only the most
+#    recent few, so MANIFEST_MAIN doesn't grow unbounded.
+#
+# REQUIRES
+#    boto3 (pip install boto3 --break-system-packages)
+#
+# VERSION
+#    1.0: Initial implementation
+#    1.1: Paths and logging moved to config.py / common.py; cleanup now
+#         only ever touches dated inventory directories (previously relied
+#         on alphabetical sort ordering to spare other subdirectories).
+#
+# ================================================================
+# END_OF_HEADER
+# ================================================================
+
 import datetime
 import gzip
 import json
-import logging
 import os
 import shutil
-import sys
-import boto3
-from botocore import UNSIGNED
-from botocore.client import Config
 
-inventory_bucket = "imos-data-inventory"
-base_s3_prefix = "imos-data/Daily_Inventory_Whole_Bucket"
-manifest_main = "/g/data/sh74/admin/globus/test/"
-
-def setup_logging(date_dir_name, log_dir):
-    log_subdir = os.path.join(log_dir, date_dir_name)
-    os.makedirs(log_subdir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    log_path = os.path.join(log_subdir, f"{timestamp}.txt")
-    log = logging.getLogger()
-    log.setLevel(logging.INFO)
-    for handler in log.handlers[:]:
-        handler.close()
-        log.removeHandler(handler)
-    formatter = logging.Formatter("%(asctime)s %(message)s")
-    file_handler = logging.FileHandler(log_path, mode="a")
-    file_handler.setFormatter(formatter)
-    log.addHandler(file_handler)
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    log.addHandler(stream_handler)
-    return log
+from common import DATE_DIR_RE, get_s3_client, setup_logging
+from config import BASE_S3_PREFIX, INVENTORY_BUCKET, LOG_DIR, MANIFEST_MAIN
 
 
 def cleanup_old_manifests(manifest_main, log, keep=3):
+    """Remove all but the `keep` most recent dated inventory directories.
+    Only directories matching the dated-inventory name pattern are ever
+    considered, so other subdirectories under manifest_main (e.g.
+    nci_imos_manifest, download_test_datamover, logs) are never touched."""
     entries = [
         d for d in os.listdir(manifest_main)
-        if os.path.isdir(os.path.join(manifest_main, d)) and d != "logs"
+        if DATE_DIR_RE.match(d) and os.path.isdir(os.path.join(manifest_main, d))
     ]
     entries.sort()
     to_remove = entries[:-keep] if len(entries) > keep else []
@@ -52,28 +56,28 @@ def cleanup_old_manifests(manifest_main, log, keep=3):
         shutil.rmtree(path)
         log.info(f"removed old manifest dir: {path}")
 
+
 def main():
-    os.makedirs(manifest_main, exist_ok=True)
+    os.makedirs(MANIFEST_MAIN, exist_ok=True)
 
     prev_date = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     manifest_prefix = f"{prev_date}T01-00Z"
 
-    log_dir = os.path.join(manifest_main, "logs/manifest_download")
-    log = setup_logging(manifest_prefix, log_dir)
+    log = setup_logging(LOG_DIR, os.path.join("manifest_download", manifest_prefix))
 
-    day_dir = os.path.join(manifest_main, manifest_prefix)
+    day_dir = os.path.join(MANIFEST_MAIN, manifest_prefix)
     os.makedirs(day_dir, exist_ok=True)
     existing = [f for f in os.listdir(day_dir) if f.endswith(".csv") or f.endswith(".gz")]
     if existing:
         log.info(f"CSV or GZ files already present in {day_dir} — skipping.")
         return
     log.info(f"Manifest date: {manifest_prefix}")
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-    manifest_key = f"{base_s3_prefix}/{manifest_prefix}/manifest.json"
+    s3 = get_s3_client()
+    manifest_key = f"{BASE_S3_PREFIX}/{manifest_prefix}/manifest.json"
     manifest_local = os.path.join(day_dir, "manifest.json")
-    log.info(f"Fetching manifest from: s3://{inventory_bucket}/{manifest_key}")
-    s3.download_file(inventory_bucket, manifest_key, manifest_local)
-    log.info(f"download: s3://{inventory_bucket}/{manifest_key} to {manifest_local}")
+    log.info(f"Fetching manifest from: s3://{INVENTORY_BUCKET}/{manifest_key}")
+    s3.download_file(INVENTORY_BUCKET, manifest_key, manifest_local)
+    log.info(f"download: s3://{INVENTORY_BUCKET}/{manifest_key} to {manifest_local}")
     with open(manifest_local) as f:
         manifest = json.load(f)
     # destinationBucket in the manifest is an ARN like
@@ -94,8 +98,7 @@ def main():
         log.info(f"decompressed: {local_gz} -> {local_csv}")
     log.info("Done.")
 
-    # Cleanup old manifests
-    cleanup_old_manifests(manifest_main, log)
+    cleanup_old_manifests(MANIFEST_MAIN, log)
 
 
 if __name__ == "__main__":

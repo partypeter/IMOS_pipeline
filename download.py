@@ -1,54 +1,70 @@
 #!/usr/bin/env python3
-"""
-Downloads every file listed in the per-prefix temp manifests under temp_dir,
-recreating the S3 key structure under outdir (e.g. key "IMOS/AATAMS/x.nc"
-lands at outdir/IMOS/AATAMS/x.nc).
-
-Deliberately simple and sequential — no parallelism yet. The point of this
-run is just to see how it performs and whether parallelism actually turns
-out to be necessary before adding that complexity.
-
-Once all downloads are attempted, each temp manifest under temp_dir is
-appended into its persistent manifest under nci_manifest and then deleted —
-regardless of whether every individual file succeeded. A file that failed
-to download (e.g. NoSuchKey, because it was retracted from the source
-bucket before ever being downloaded) still gets merged into the persistent
-manifest as if present; this is a deliberate, accepted simplification —
-a separate reverse-diff script (persistent manifest vs. latest inventory,
-not yet built) is responsible for catching retracted/missing files, so
-this script doesn't need to handle that case itself.
-
-Checksums: requests ChecksumMode='ENABLED' on every GetObject and, when S3
-reports ChecksumType == 'FULL_OBJECT' (a checksum that's a genuine hash of
-the whole file, not a multipart composite), verifies the download by
-computing the same algorithm locally while streaming and comparing digests.
-Preference order: SHA256, SHA1, CRC64NVME, CRC32C, CRC32 — first one S3
-actually returned wins. The filepath,checksum temp CSVs are only used for
-the file list; the checksum column (S3 Inventory ETag) is intentionally
-ignored, since it isn't a reliable full-object hash for multipart uploads.
-
-If no FULL_OBJECT checksum is available for a file (common for older
-objects), falls back to a Content-Length size check and logs that no
-checksum verification was possible.
-
-Everything — per-file speed, per-file checksum result, and an overall
-summary — goes to a single timestamped log file under log_dir.
-
-Requires: boto3, awscrt (for CRC32C/CRC64NVME verification when available;
-falls back gracefully to SHA256/SHA1/CRC32 if awscrt isn't installed)
-"""
+# ------------------------------------------------------------------
+#- IMPLEMENTATION
+#- author      Hannes Hollmann, National Computational Infrastructure
+#- license     GNU General Public License
+# ------------------------------------------------------------------
+# SYNOPSIS
+#    download.py
+#
+# DESCRIPTION
+#    Downloads every file listed in the per-prefix temp manifests under
+#    TEMP_DIR, recreating the S3 key structure under OUTDIR (e.g. key
+#    "IMOS/AATAMS/x.nc" lands at OUTDIR/IMOS/AATAMS/x.nc). This is stage 3
+#    of the pipeline, consuming the temp manifests written by
+#    compare_manifests.py (stage 2).
+#
+#    Deliberately simple and sequential — no parallelism. The point of this
+#    run is just to see how it performs and whether parallelism actually
+#    turns out to be necessary before adding that complexity.
+#
+#    Once all downloads are attempted, each temp manifest under TEMP_DIR is
+#    appended into its persistent manifest under NCI_MANIFEST, de-duplicated,
+#    and then deleted — regardless of whether every individual file
+#    succeeded. A file that failed to download (e.g. NoSuchKey, because it
+#    was retracted from the source bucket before ever being downloaded)
+#    still gets merged into the persistent manifest as if present; this is
+#    a deliberate, accepted simplification — retract_diff.py (stage 5) is
+#    responsible for catching retracted/missing files on a later run, so
+#    this script doesn't need to handle that case itself.
+#
+# CHECKSUMS
+#    Requests ChecksumMode='ENABLED' on every GetObject and, when S3
+#    reports ChecksumType == 'FULL_OBJECT' (a checksum that's a genuine
+#    hash of the whole file, not a multipart composite), verifies the
+#    download by computing the same algorithm locally while streaming and
+#    comparing digests. Preference order: SHA256, SHA1, CRC64NVME, CRC32C,
+#    CRC32 — first one S3 actually returned wins. The filepath,checksum
+#    temp CSVs are only used for the file list; the checksum column (S3
+#    Inventory ETag) is intentionally ignored, since it isn't a reliable
+#    full-object hash for multipart uploads.
+#
+#    If no FULL_OBJECT checksum is available for a file (common for older
+#    objects), falls back to a Content-Length size check and logs that no
+#    checksum verification was possible.
+#
+#    Everything — per-file speed, per-file checksum result, and an overall
+#    summary — goes to a single timestamped log file under LOG_DIR.
+#
+# REQUIRES
+#    boto3, awscrt (for CRC32C/CRC64NVME verification when available;
+#    falls back gracefully to SHA256/SHA1/CRC32 if awscrt isn't installed)
+#
+# VERSION
+#    1.0: Initial implementation
+#    1.1: Paths, logging, and S3 client moved to config.py / common.py;
+#         merge_temp_into_persistent now de-duplicates each persistent
+#         manifest after appending (previously a plain append with no
+#         duplicate check).
+#
+# ================================================================
+# END_OF_HEADER
+# ================================================================
 
 import csv
-import datetime
-import logging
 import os
-import sys
 import time
-import resource
 
-import boto3
-from botocore import UNSIGNED
-from botocore.client import Config
 from botocore.exceptions import ClientError
 from botocore.httpchecksum import Crc32Checksum, Sha1Checksum, Sha256Checksum
 
@@ -58,12 +74,8 @@ try:
 except ImportError:
     have_crt_checksums = False
 
-source_bucket = "imos-data"
-manifest_main = "/g/data/sh74/admin/globus/test/"
-nci_manifest = os.path.join(manifest_main, "nci_imos_manifest")
-temp_dir = os.path.join(manifest_main, "nci_imos_manifest/temp")
-outdir = os.path.join(manifest_main, "download_test_datamover")  
-log_dir = os.path.join(manifest_main, "logs/download_test_datamover")
+from common import dedupe_manifest, get_s3_client, peak_memory_gb, setup_logging
+from config import LOG_DIR, NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR
 
 chunk_size = 8 * 1024 * 1024  # 8 MB
 progress_interval = 3600  # seconds — how often to log a running speed estimate
@@ -78,31 +90,6 @@ if have_crt_checksums:
 checksum_candidates.append(("ChecksumCRC32", Crc32Checksum))
 
 
-def setup_logging(log_dir):
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    log_path = os.path.join(log_dir, f"{timestamp}.txt")
-
-    log = logging.getLogger()
-    log.setLevel(logging.INFO)
-
-    for handler in log.handlers[:]:
-        handler.close()
-        log.removeHandler(handler)
-
-    formatter = logging.Formatter("%(asctime)s %(message)s")
-
-    file_handler = logging.FileHandler(log_path, mode="a")
-    file_handler.setFormatter(formatter)
-    log.addHandler(file_handler)
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    log.addHandler(stream_handler)
-
-    return log
-
-
 def iter_temp_manifest_keys(temp_dir):
     for csv_name in sorted(os.listdir(temp_dir)):
         if not csv_name.endswith(".csv"):
@@ -114,11 +101,11 @@ def iter_temp_manifest_keys(temp_dir):
 
 
 def download_one(s3, key, log):
-    local_path = os.path.join(outdir, key)
+    local_path = os.path.join(OUTDIR, key)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
     try:
-        response = s3.get_object(Bucket=source_bucket, Key=key, ChecksumMode="ENABLED")
+        response = s3.get_object(Bucket=SOURCE_BUCKET, Key=key, ChecksumMode="ENABLED")
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "Unknown")
         log.error(f"{key}: FAILED to fetch ({error_code}) — skipping")
@@ -164,11 +151,11 @@ def download_one(s3, key, log):
 
 
 def merge_temp_into_persistent(log):
-    for csv_name in sorted(os.listdir(temp_dir)):
+    for csv_name in sorted(os.listdir(TEMP_DIR)):
         if not csv_name.endswith(".csv"):
             continue
-        temp_csv = os.path.join(temp_dir, csv_name)
-        persistent_csv = os.path.join(nci_manifest, csv_name)
+        temp_csv = os.path.join(TEMP_DIR, csv_name)
+        persistent_csv = os.path.join(NCI_MANIFEST, csv_name)
 
         try:
             with open(temp_csv, newline="") as f:
@@ -185,25 +172,27 @@ def merge_temp_into_persistent(log):
 
             os.remove(temp_csv)
             log.info(f"{csv_name}: merged {len(rows)} entrie(s) into persistent manifest, temp file removed")
+
+            dedupe_manifest(persistent_csv, log)
         except Exception as e:
             log.error(f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place")
 
 
 def main():
     overall_start = time.perf_counter()
-    log = setup_logging(log_dir)
-    log.info(f"temp_dir = {temp_dir}")
-    log.info(f"outdir   = {outdir}")
+    log = setup_logging(LOG_DIR, "download")
+    log.info(f"TEMP_DIR = {TEMP_DIR}")
+    log.info(f"OUTDIR   = {OUTDIR}")
 
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(OUTDIR, exist_ok=True)
 
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    s3 = get_s3_client()
 
     total_files = 0
     total_failed = 0
     total_bytes = 0
     last_report = overall_start
-    for key in iter_temp_manifest_keys(temp_dir):
+    for key in iter_temp_manifest_keys(TEMP_DIR):
         result = download_one(s3, key, log)
         if result is None:
             total_failed += 1
@@ -227,13 +216,10 @@ def main():
     overall_elapsed = time.perf_counter() - overall_start
     overall_speed = (total_bytes / (1024 * 1024)) / overall_elapsed if overall_elapsed > 0 else 0.0
 
-    peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    peak_gb = peak_kb / (1024 ** 2)
-
     log.info(
         f"Done. {total_files} file(s) ok, {total_failed} failed, {total_bytes / (1024 * 1024):.2f} MB, "
         f"{overall_elapsed:.2f}s total, {overall_speed:.2f} MB/s average, "
-        f"{peak_gb:.2f} GB peak RAM"
+        f"{peak_memory_gb():.2f} GB peak RAM"
     )
 
 

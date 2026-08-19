@@ -19,6 +19,8 @@
 #
 # VERSION
 #    1.0: Initial implementation
+#    1.1: source_path/target_path/log_path now derived from the repo's
+#         central config.sh instead of being hardcoded here.
 #
 # ================================================================
 # END_OF_HEADER
@@ -28,19 +30,23 @@
 # USER CONFIGURATION
 # ===============================================================
 
+# Central path config (repo root) — source_path/target_path/log_path below
+# are derived from this instead of being hardcoded here.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config.sh"
+
 # Job name — also used as the log folder name
 # Preferrably use Jira / Helpdesk ticket numbers
-# Log files get a time stamp so multiple logs under same ticket 
+# Log files get a time stamp so multiple logs under same ticket
 # (job_name) are fine.
-latest=$(find /g/data/sh74/admin/globus/test -maxdepth 1 -type d -name '2026*' -printf '%f\n' | sort | tail -n 1)
+latest=$(find "${MANIFEST_MAIN}" -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}Z' -printf '%f\n' | sort | tail -n 1)
 job_name="mv_to_prod/$latest"
 
 # Source and target paths (no trailing slash)
-source_path="/g/data/sh74/admin/globus/test/download_test_datamover"
-target_path="/g/data/sh74/admin/staging"
+source_path="${OUTDIR}"
+target_path="${STAGING_BASE}"
 
 # Log folder (created automatically before submission)
-log_path="/g/data/sh74/admin/globus/test/logs/${job_name}"
+log_path="${LOG_DIR}/${job_name}"
 
 # Overwrite existing files in target path?  true|false
 overwrite=true

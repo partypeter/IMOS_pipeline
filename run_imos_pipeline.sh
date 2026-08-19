@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 #
-# Runs the four-stage IMOS onboarding pipeline in order:
+# Runs the five-stage IMOS onboarding pipeline in order:
 #   1. get_imos_manifest.py       - fetch latest S3 inventory manifest
-#   2. shard_diff.py         - diff inventory against persistent manifests, populate temp_dir
-#   3. download_new_files.py - download new files, merge temp manifests into persistent
-#   4. mv_to_prod/coordinator.py - move downloaded files into staging, then verify
-#                                  source is empty and clean up empty directories
+#   2. compare_manifests.py       - diff inventory against persistent manifests, populate temp_dir
+#   3. download.py                - download new files, merge temp manifests into persistent
+#   4. mv_to_prod/coordinator.sh  - move downloaded files into staging, then verify
+#                                   source is empty and clean up empty directories
+#   5. retract_diff.py            - diff persistent manifests against the latest inventory the
+#                                   other way around: move files retracted upstream out of
+#                                   staging into the outgoing quarantine, and prune old
+#                                   quarantine folders
 #
 # Each stage must exit 0 before the next one runs. If a stage fails, the
 # pipeline stops immediately and the failure is logged - it will NOT
 # continue on to later stages with a partial/inconsistent state.
 #
-# Stage 4 is itself a bash script (despite the .py name) and internally
-# calls "bash mv_to_prod.sh" using a bare relative path, so it must be run
-# from its own directory - run_stage cd's into each script's directory
-# before invoking it, which is harmless for the other stages too.
+# Stage 4 is itself a bash script and internally calls "bash mv_to_prod.sh"
+# using a bare relative path, so it must be run from its own directory -
+# run_stage cd's into each script's directory before invoking it, which is
+# harmless for the other stages too.
 #
 # Exit code: 0 if all stages succeeded, non-zero (the failing stage's exit
 # code) otherwise. A PIPELINE_ABORT-tagged line in the log marks a
@@ -23,16 +27,14 @@
 
 set -uo pipefail
 
-PYTHON="/home/900/hxh900/myenv/bin/python3"
-BASH_BIN="bash"
-
-SCRIPT_DIR="/g/data/sh74/admin/globus/test/scripts"
-LOG_DIR="/g/data/sh74/admin/globus/test/logs/pipeline"
+SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR_SELF}/config.sh"
 
 GET_MANIFEST="${SCRIPT_DIR}/get_imos_manifest.py"
-SHARD_DIFF="${SCRIPT_DIR}/shard_diff.py"
-DOWNLOAD_NEW="${SCRIPT_DIR}/download_new_files.py"
-MV_TO_PROD_COORDINATOR="${SCRIPT_DIR}/mv_to_prod/coordinator.py"
+COMPARE_MANIFESTS="${SCRIPT_DIR}/compare_manifests.py"
+DOWNLOAD="${SCRIPT_DIR}/download.py"
+MV_TO_PROD_COORDINATOR="${SCRIPT_DIR}/mv_to_prod/coordinator.sh"
+RETRACT_DIFF="${SCRIPT_DIR}/retract_diff.py"
 
 mkdir -p "${LOG_DIR}"
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
@@ -63,10 +65,11 @@ run_stage() {
 
 log "=== Pipeline run started ==="
 
-run_stage "get_imos_manifest"       "${PYTHON}"   "${GET_MANIFEST}"
-run_stage "shard_diff"         "${PYTHON}"   "${SHARD_DIFF}"
-run_stage "download_new_files" "${PYTHON}"   "${DOWNLOAD_NEW}"
-run_stage "mv_to_prod"         "${BASH_BIN}" "${MV_TO_PROD_COORDINATOR}"
+run_stage "get_imos_manifest"    "${PYTHON}"   "${GET_MANIFEST}"
+run_stage "compare_manifests"    "${PYTHON}"   "${COMPARE_MANIFESTS}"
+run_stage "download"             "${PYTHON}"   "${DOWNLOAD}"
+run_stage "mv_to_prod"           "bash"        "${MV_TO_PROD_COORDINATOR}"
+run_stage "retract_diff"         "${PYTHON}"   "${RETRACT_DIFF}"
 
 log "=== Pipeline run completed successfully ==="
 exit 0
