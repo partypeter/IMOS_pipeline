@@ -46,3 +46,10 @@ LOG_DIR = os.path.join(MANIFEST_MAIN, "logs")
 STAGING_BASE = "/g/data/sh74/admin/staging"
 OUTGOING_BASE = "/g/data/sh74/admin/outgoing"
 OUTGOING_RETENTION_DAYS = 28
+
+# retract_diff.py sanity check: if the latest inventory scan turns up fewer
+# live keys than this fraction of what's currently tracked across all
+# persistent manifests, that's treated as a broken/incomplete inventory
+# scan rather than genuine mass retraction, and the whole run aborts
+# without touching any files or manifests.
+MIN_LIVE_INVENTORY_RATIO = 0.5

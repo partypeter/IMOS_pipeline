@@ -32,11 +32,26 @@
 #    OUTGOING_RETENTION_DAYS is deleted, so retracted files don't
 #    accumulate there indefinitely.
 #
+# SAFETY GUARDS
+#    A near-empty or truncated inventory scan (e.g. get_imos_manifest.py
+#    downloaded a partial set of CSVs) would otherwise look identical to
+#    "everything got retracted", which would move the world into outgoing.
+#    Two guards protect against that:
+#      - Global: if the total live keys found across all prefixes in the
+#        latest inventory is below MIN_LIVE_INVENTORY_RATIO of the total
+#        entries currently tracked across all persistent manifests, the
+#        whole run aborts before touching anything (PIPELINE_ABORT).
+#      - Per-prefix: if one specific prefix's manifest has entries but the
+#        latest inventory has zero live keys for that prefix (while other
+#        prefixes look normal), that prefix alone is skipped and logged
+#        rather than treated as a full retraction.
+#
 # REQUIRES
 #    boto3
 #
 # VERSION
 #    1.0: Initial implementation
+#    1.1: Added the two safety guards described above.
 #
 # ================================================================
 # END_OF_HEADER
@@ -46,6 +61,7 @@ import csv
 import datetime
 import os
 import shutil
+import sys
 import time
 
 from common import find_latest_date_dir, peak_memory_gb, setup_logging
@@ -53,6 +69,7 @@ from config import (
     IMOS_PREFIX,
     LOG_DIR,
     MANIFEST_MAIN,
+    MIN_LIVE_INVENTORY_RATIO,
     NCI_MANIFEST,
     OUTGOING_BASE,
     OUTGOING_RETENTION_DAYS,
@@ -81,6 +98,21 @@ def load_inventory_keys_by_prefix(date_dir, log):
                 keys_by_prefix.setdefault(prefix, set()).add(key)
 
     return keys_by_prefix
+
+
+def count_persistent_entries_by_prefix(nci_manifest):
+    """Number of data rows (excluding header) in each persistent manifest
+    under nci_manifest, keyed by prefix."""
+    counts = {}
+    for csv_name in sorted(os.listdir(nci_manifest)):
+        if not csv_name.endswith(".csv"):
+            continue
+        prefix = csv_name[:-len(".csv")]
+        with open(os.path.join(nci_manifest, csv_name), newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # header
+            counts[prefix] = sum(1 for _ in reader)
+    return counts
 
 
 def move_retracted_file(key, run_datestamp, log):
@@ -164,13 +196,30 @@ def main():
     log.info(f"OUTGOING_BASE = {OUTGOING_BASE}")
 
     keys_by_prefix = load_inventory_keys_by_prefix(date_dir, log)
+    persistent_counts = count_persistent_entries_by_prefix(NCI_MANIFEST)
+
+    total_live_keys = sum(len(keys) for keys in keys_by_prefix.values())
+    total_persistent_entries = sum(persistent_counts.values())
+    if total_persistent_entries > 0 and total_live_keys < total_persistent_entries * MIN_LIVE_INVENTORY_RATIO:
+        ratio = total_live_keys / total_persistent_entries
+        log.error(
+            f"[ALARM] PIPELINE_ABORT: latest inventory has only {total_live_keys} live key(s) under "
+            f"{IMOS_PREFIX}, but persistent manifests currently track {total_persistent_entries} "
+            f"({ratio:.0%}, below the {MIN_LIVE_INVENTORY_RATIO:.0%} minimum). This looks like an "
+            f"incomplete or broken inventory scan rather than genuine mass retraction — aborting "
+            f"without touching any files or manifests."
+        )
+        sys.exit(1)
 
     total_retracted = 0
-    for csv_name in sorted(os.listdir(NCI_MANIFEST)):
-        if not csv_name.endswith(".csv"):
-            continue
-        prefix = csv_name[:-len(".csv")]
+    for prefix, entry_count in persistent_counts.items():
         live_keys = keys_by_prefix.get(prefix, set())
+        if not live_keys and entry_count:
+            log.warning(
+                f"{prefix}: no live keys found in the latest inventory for this prefix "
+                f"(manifest has {entry_count} entrie(s)) — skipping to avoid mass-retracting it"
+            )
+            continue
         total_retracted += process_manifest(prefix, live_keys, run_datestamp, log)
 
     log.info(f"Total retracted: {total_retracted}")
