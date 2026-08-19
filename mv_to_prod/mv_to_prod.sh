@@ -47,6 +47,19 @@
 #         Directories missing at the destination are now moved whole,
 #         preserving ownership and avoiding unnecessary mkdir calls.
 #         latest symlink creation moved to post-move subtree scan.
+#    2.1: Performance fix for runs where the destination is already
+#         substantially populated (so pass 1's whole-directory fast
+#         path rarely applies and most files fall through to pass 2):
+#         - Pass 1's queue was popped via "queue=(\"${queue[@]:1}\")",
+#           which re-slices the whole remaining array on every dequeue
+#           (O(n^2) for a large queue). Replaced with an index pointer.
+#         - Pass 2 now processes files in parallel batches (xargs -P)
+#           instead of one mv per iteration of a single serial loop.
+#           Per-file move/skip/overwrite logic, dry_run/overwrite
+#           semantics, and log line formats are unchanged; summary
+#           counts are now derived from the log's tagged lines after
+#           the pass completes, since counters can't be shared across
+#           the parallel worker processes.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -60,10 +73,13 @@
 #      move in pass 1, only the first one encountered will get a
 #      latest symlink (alphabetically, since find output is sorted).
 #
-#    - Pass 1 loads one directory level at a time into the queue.
-#      Pass 2 loads the full remaining file list into memory before
-#      processing. For very large numbers of residual files this
-#      could be refactored to a streaming approach.
+#    - Pass 2 parallelism/batch size are tunable via pass2_parallel_jobs
+#      and pass2_batch_size (set in coordinator.sh; sane defaults apply
+#      if unset). Both workers write log lines to the same append-mode
+#      log file — safe because each line is a single short write() and
+#      POSIX/Lustre guarantee O_APPEND writes below the filesystem block
+#      size don't interleave, but this assumption does NOT hold on
+#      weaker-consistency network filesystems (e.g. older NFS setups).
 #
 #    - The overwrite flag applies to pass 2 (per-file) only. Pass 1
 #      directory moves only occur when the destination directory is
@@ -108,11 +124,12 @@ echo "--- Pass 1: directory-level moves (BFS) ---"
 echo ""
 
 queue=("$source_path")
+queue_idx=0
 
-while [ ${#queue[@]} -gt 0 ]; do
+while [ "$queue_idx" -lt ${#queue[@]} ]; do
 
-  current="${queue[0]}"
-  queue=("${queue[@]:1}")
+  current="${queue[$queue_idx]}"
+  queue_idx=$((queue_idx + 1))
 
   for entry in "$current"/*/; do
     [ -d "$entry" ] || continue
@@ -169,36 +186,54 @@ echo ""
 echo "--- Pass 2: file-level moves (remaining source files) ---"
 echo ""
 
-while IFS= read -r file; do
-
-  src_dir="${file%/*}"
-  filename="${file##*/}"
-  dst_dir="${src_dir/$source_path/$target_path}"
-  dst_file="${dst_dir}/${filename}"
+# Processes one file: same decision logic (missing dest dir / skip-if-exists
+# / overwrite-if-exists / plain move) and the same tagged log lines as the
+# original serial loop. Run in parallel batches below via xargs -P, so it
+# can't rely on shared counter variables (each worker is a separate
+# process) — final counts are derived from the log's tagged lines instead,
+# after the pass completes.
+move_one_file() {
+  local file="$1"
+  local src_dir="${file%/*}"
+  local filename="${file##*/}"
+  local dst_dir="${src_dir/$source_path/$target_path}"
+  local dst_file="${dst_dir}/${filename}"
 
   if [ ! -d "$dst_dir" ]; then
     # Should not occur after pass 1 — log it if it does
     echo "  [WARN] Destination directory does not exist: ${dst_dir}"
     echo "         ${file} was not moved."
-    (( count_files_skipped++ ))
   elif [ -e "${dst_file}" ] && [ "$overwrite" = false ]; then
     echo "  [SKIPPED] ${dst_file}"
-    (( count_files_skipped++ ))
   elif [ -e "${dst_file}" ] && [ "$overwrite" = true ]; then
     if [ "$dry_run" = false ]; then
       mv -f "${file}" "${dst_dir}/"
     fi
     echo "  [OVERWRITE] ${dst_file}"
-    (( count_files_overwritten++ ))
   else
     if [ "$dry_run" = false ]; then
       mv "${file}" "${dst_dir}/"
     fi
     echo "  [MOVED] ${dst_file}"
-    (( count_files_moved++ ))
   fi
+}
+export -f move_one_file
+export source_path target_path overwrite dry_run
 
-done < <(find "$source_path" \( -type f -o -type l \) | sort)
+# Tunable via coordinator.sh; sane defaults if unset there.
+pass2_parallel_jobs="${pass2_parallel_jobs:-8}"
+pass2_batch_size="${pass2_batch_size:-100}"
+
+find "$source_path" \( -type f -o -type l \) | sort | \
+  xargs -P "$pass2_parallel_jobs" -n "$pass2_batch_size" bash -c '
+    for file in "$@"; do
+      move_one_file "$file"
+    done
+  ' _
+
+count_files_moved=$(grep -c '^  \[MOVED\] ' "$log_file")
+count_files_overwritten=$(grep -c '^  \[OVERWRITE\] ' "$log_file")
+count_files_skipped=$(( $(grep -c '^  \[SKIPPED\] ' "$log_file") + $(grep -c '^  \[WARN\] ' "$log_file") ))
 
 echo ""
 echo "--- Pass 2 complete ---"
