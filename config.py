@@ -40,6 +40,12 @@ TEMP_DIR = os.path.join(NCI_MANIFEST, "temp")
 OUTDIR = os.path.join(MANIFEST_MAIN, "download_test_datamover")
 LOG_DIR = os.path.join(MANIFEST_MAIN, "logs")
 
+# retract_diff.py's scratch space for per-prefix live-key files — keeps
+# the live inventory off the heap (see retract_diff.py's module docstring
+# for why). Must be on real disk (/g/data), not /tmp — /tmp is commonly
+# tmpfs (RAM-backed) on HPC/VM nodes, which would defeat the purpose.
+RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
+
 # Where mv_to_prod lands files (mirrors mv_to_prod/coordinator.sh's
 # target_path, which now sources this same value via config.sh) and where
 # retract_diff.py moves files that have been retracted upstream.
