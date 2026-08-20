@@ -46,7 +46,7 @@ source_path="${OUTDIR}"
 target_path="${STAGING_BASE}"
 
 # Log folder (created automatically before submission)
-log_path="${LOG_DIR}/${job_name}"
+log_path="${LOGS_BASE}/${job_name}"
 
 # Overwrite existing files in target path?  true|false
 overwrite=true

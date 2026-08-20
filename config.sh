@@ -17,7 +17,7 @@
 #    equivalent values, since bash can't import a Python module. The two
 #    files must be kept in sync by hand:
 #      MANIFEST_MAIN  <-> config.py MANIFEST_MAIN
-#      LOG_DIR        <-> config.py LOG_DIR
+#      LOGS_BASE      <-> config.py LOG_DIR
 #      OUTDIR         <-> config.py OUTDIR
 #      STAGING_BASE   <-> config.py STAGING_BASE
 #
@@ -32,7 +32,8 @@ PYTHON="/home/900/hxh900/myenv/bin/python3"
 SCRIPT_DIR="/g/data/sh74/admin/globus/test/scripts"
 
 MANIFEST_MAIN="/g/data/sh74/admin/globus/test/"
-LOG_DIR="${MANIFEST_MAIN}logs/pipeline"
+LOGS_BASE="${MANIFEST_MAIN}logs"
+LOG_DIR="${LOGS_BASE}/pipeline"
 
 # Where mv_to_prod lands files (mv_to_prod/coordinator.sh's target_path)
 # and where download.py puts files it downloads (mv_to_prod's source_path).
