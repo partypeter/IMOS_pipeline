@@ -59,3 +59,17 @@ OUTGOING_RETENTION_DAYS = 28
 # scan rather than genuine mass retraction, and the whole run aborts
 # without touching any files or manifests.
 MIN_LIVE_INVENTORY_RATIO = 0.5
+
+# compare_manifests.py: prefixes whose persistent manifest has more rows
+# than this switch from the in-memory diff to an external sort+join diff
+# (see compare_manifests.py's module docstring) — a prefix this large
+# can't be held in memory as a Python set without risking OOM on the
+# datamover VM.
+LARGE_PREFIX_ROW_THRESHOLD = 5_000_000
+
+# compare_manifests.py's scratch space for the sort+join diff used on
+# large prefixes. Must be on real disk (/g/data), not /tmp — /tmp is
+# commonly tmpfs (RAM-backed) or size-constrained on HPC/VM nodes, which
+# would defeat the purpose (confirmed empirically: GNU sort ran out of
+# space under /tmp on the datamover VM but succeeded once pointed here).
+COMPARE_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_compare_manifests")

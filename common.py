@@ -127,6 +127,16 @@ def read_csv_rows(path, retries=3, delay_seconds=2):
     return retry(_read, retries=retries, delay_seconds=delay_seconds)
 
 
+def count_csv_rows(path):
+    """Count data rows in a CSV file (excluding the header), streaming
+    line-by-line so it never materializes the file's contents — used to
+    decide whether a manifest is large enough to need the disk-based
+    diff path instead of an in-memory one."""
+    with open(path, newline="") as f:
+        count = sum(1 for _ in f)
+    return max(count - 1, 0)
+
+
 def dedupe_manifest(persistent_csv, log):
     """Remove duplicate filepath rows from a persistent manifest CSV,
     keeping the first occurrence of each filepath. Rewrites the file only
