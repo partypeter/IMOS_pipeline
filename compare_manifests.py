@@ -47,7 +47,7 @@ import csv
 import os
 import time
 
-from common import find_latest_date_dir, get_s3_client, peak_memory_gb, setup_logging
+from common import find_latest_date_dir, get_s3_client, peak_memory_gb, read_csv_rows, setup_logging
 from config import IMOS_PREFIX, LOG_DIR, MANIFEST_MAIN, NCI_MANIFEST, SOURCE_BUCKET, TEMP_DIR
 
 
@@ -64,12 +64,12 @@ def get_imos_prefixes(s3):
 
 
 def load_existing_filepaths(manifest_csv):
-    existing = set()
-    with open(manifest_csv, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            existing.add(row["filepath"])
-    return existing
+    """Retries a transient read failure (see common.read_csv_rows) instead
+    of aborting the whole run outright — this manifest lives on /g/data
+    mounted over the network onto the datamover VM, where a brief hiccup
+    can surface as a spurious mid-read error."""
+    _, rows = read_csv_rows(manifest_csv)
+    return {row[0] for row in rows}
 
 
 def main():

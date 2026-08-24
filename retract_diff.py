@@ -73,6 +73,12 @@
 #         persistent manifest's rewrite row-by-row instead of holding both
 #         the original and surviving rows in memory. Fixes a real OOM on
 #         the datamover VM. Behavior/output unchanged — memory only.
+#    1.3: count_persistent_entries_by_prefix and the per-prefix
+#         process_manifest call now retry (see common.retry) on a
+#         transient read failure instead of aborting the whole run —
+#         persistent manifests live on /g/data mounted over the network
+#         onto the datamover VM, where a brief hiccup can surface as a
+#         spurious mid-read error.
 #
 # ================================================================
 # END_OF_HEADER
@@ -85,7 +91,7 @@ import shutil
 import sys
 import time
 
-from common import find_latest_date_dir, peak_memory_gb, setup_logging
+from common import find_latest_date_dir, peak_memory_gb, retry, setup_logging
 from config import (
     IMOS_PREFIX,
     LOG_DIR,
@@ -150,16 +156,21 @@ def load_live_keys_for_prefix(scratch_dir, prefix):
 
 def count_persistent_entries_by_prefix(nci_manifest):
     """Number of data rows (excluding header) in each persistent manifest
-    under nci_manifest, keyed by prefix."""
+    under nci_manifest, keyed by prefix. Retries a transient per-file read
+    failure (see common.retry) instead of aborting the whole run — counts
+    stream row-by-row rather than materializing the file, same as before."""
+    def _count_one(path):
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # header
+            return sum(1 for _ in reader)
+
     counts = {}
     for csv_name in sorted(os.listdir(nci_manifest)):
         if not csv_name.endswith(".csv"):
             continue
         prefix = csv_name[:-len(".csv")]
-        with open(os.path.join(nci_manifest, csv_name), newline="") as f:
-            reader = csv.reader(f)
-            next(reader, None)  # header
-            counts[prefix] = sum(1 for _ in reader)
+        counts[prefix] = retry(_count_one, os.path.join(nci_manifest, csv_name))
     return counts
 
 
@@ -272,7 +283,14 @@ def main():
             )
             continue
         live_keys = load_live_keys_for_prefix(RETRACT_SCRATCH_DIR, prefix)
-        total_retracted += process_manifest(prefix, live_keys, run_datestamp, log)
+        # Retrying the whole call is safe even if a prior attempt got partway
+        # through moving files before failing: a retry just re-reads the
+        # still-untouched persistent_csv (process_manifest only replaces it
+        # at the very end) and re-processes every row: files already moved
+        # out on the failed attempt simply hit the expected "already retracted,
+        # no local file found" branch and get cleaned up from the manifest
+        # like normal, so no special-casing is needed here.
+        total_retracted += retry(process_manifest, prefix, live_keys, run_datestamp, log)
         live_keys = None  # release before moving to the next prefix
 
     log.info(f"Total retracted: {total_retracted}")
