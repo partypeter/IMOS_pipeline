@@ -19,6 +19,12 @@
 #
 # VERSION
 #    1.0: Initial implementation
+#    1.1: LOG_DIR renamed to LOGS_BASE to match config.sh's existing name
+#         and meaning exactly (they used to refer to two different paths
+#         under the same name across the two files — the direct cause of
+#         an earlier mv_to_prod log-path regression). Added
+#         stage_log_path(), the canonical per-run log path formula shared
+#         by every stage — mirrored in config.sh.
 #
 # ================================================================
 # END_OF_HEADER
@@ -38,7 +44,18 @@ MANIFEST_MAIN = "/g/data/sh74/admin/globus/test/"
 NCI_MANIFEST = os.path.join(MANIFEST_MAIN, "nci_imos_manifest")
 TEMP_DIR = os.path.join(NCI_MANIFEST, "temp")
 OUTDIR = os.path.join(MANIFEST_MAIN, "download_test_datamover")
-LOG_DIR = os.path.join(MANIFEST_MAIN, "logs")
+LOGS_BASE = os.path.join(MANIFEST_MAIN, "logs")
+
+
+def stage_log_path(stage_name, run_id):
+    """Canonical per-run log file path for one pipeline stage: one file
+    per run, named by the run ID shared across every stage of a given
+    pipeline invocation (see common.py::setup_logging) so every log
+    belonging to one run is trivially found by that ID alone. Mirrored in
+    config.sh's stage_log_path() for the bash-side stages (pipeline,
+    mv_to_prod) — keep the two in sync by hand, same as the other
+    values shared between config.py and config.sh."""
+    return os.path.join(LOGS_BASE, stage_name, f"{run_id}.log")
 
 # retract_diff.py's scratch space for per-prefix live-key files — keeps
 # the live inventory off the heap (see retract_diff.py's module docstring

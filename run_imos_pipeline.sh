@@ -24,6 +24,15 @@
 # code) otherwise. A PIPELINE_ABORT-tagged line in the log marks a
 # deliberate abort raised by a stage itself (currently only stage 4),
 # as opposed to an ordinary uncaught error.
+#
+# LOGGING: every stage of one pipeline run shares a single PIPELINE_RUN_ID
+# (exported below), used as the filename for that stage's own log under
+# config.sh's stage_log_path convention (LOGS_BASE/<stage>/<run_id>.log,
+# mirrored in config.py) — so every log produced by one run is findable
+# by that one ID. Each stage writes its own detailed log to that file;
+# only a curated handful of lines (paths, structural events, one-line
+# summaries — see each script's highlight() calls) land in this top-level
+# pipeline log, via run_stage's stdout+stderr capture below.
 
 set -uo pipefail
 
@@ -36,12 +45,16 @@ DOWNLOAD="${SCRIPT_DIR}/download.py"
 MV_TO_PROD_COORDINATOR="${SCRIPT_DIR}/mv_to_prod/coordinator.sh"
 RETRACT_DIFF="${SCRIPT_DIR}/retract_diff.py"
 
-mkdir -p "${LOG_DIR}"
-TIMESTAMP="$(date +%Y%m%d%H%M%S)"
-PIPELINE_LOG="${LOG_DIR}/${TIMESTAMP}.txt"
+PIPELINE_RUN_ID="$(date +%Y%m%d%H%M%S)"
+export PIPELINE_RUN_ID
+
+PIPELINE_LOG="$(stage_log_path pipeline "${PIPELINE_RUN_ID}")"
+mkdir -p "$(dirname "${PIPELINE_LOG}")"
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "${PIPELINE_LOG}"
+    local level="$1"
+    shift
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [${level}] $*" | tee -a "${PIPELINE_LOG}"
 }
 
 run_stage() {
@@ -49,21 +62,21 @@ run_stage() {
     local interpreter="$2"
     local script="$3"
 
-    log "Starting stage: ${name}"
+    log INFO "Starting stage: ${name}"
     (
         cd "$(dirname "${script}")" && "${interpreter}" "$(basename "${script}")"
     ) >> "${PIPELINE_LOG}" 2>&1
     local status=$?
 
     if [ ${status} -ne 0 ]; then
-        log "Stage FAILED: ${name} (exit code ${status}) - aborting pipeline"
+        log ERROR "Stage FAILED: ${name} (exit code ${status}) - aborting pipeline"
         exit ${status}
     fi
 
-    log "Stage completed: ${name}"
+    log INFO "Stage completed: ${name}"
 }
 
-log "=== Pipeline run started ==="
+log INFO "=== Pipeline run started (run_id=${PIPELINE_RUN_ID}) ==="
 
 run_stage "get_imos_manifest"    "${PYTHON}"   "${GET_MANIFEST}"
 run_stage "compare_manifests"    "${PYTHON}"   "${COMPARE_MANIFESTS}"
@@ -71,5 +84,5 @@ run_stage "download"             "${PYTHON}"   "${DOWNLOAD}"
 run_stage "mv_to_prod"           "bash"        "${MV_TO_PROD_COORDINATOR}"
 run_stage "retract_diff"         "${PYTHON}"   "${RETRACT_DIFF}"
 
-log "=== Pipeline run completed successfully ==="
+log INFO "=== Pipeline run completed successfully (run_id=${PIPELINE_RUN_ID}) ==="
 exit 0

@@ -23,6 +23,17 @@
 #         is now atomic (write to a temp file, then os.replace()) instead
 #         of truncating the original file in place, so an interruption
 #         partway through can no longer leave a corrupted manifest.
+#    1.2: setup_logging reworked for the pipeline-wide logging overhaul:
+#         one log file per run per stage (config.stage_log_path), shared
+#         across stages via PIPELINE_RUN_ID when run under
+#         run_imos_pipeline.sh, so every log from one pipeline run is
+#         findable by that one ID; stdout echo now only happens for a
+#         standalone/manual invocation (no PIPELINE_RUN_ID set), so an
+#         orchestrated run's routine detail no longer duplicates into the
+#         top-level pipeline log. Added highlight(), for the handful of
+#         lines (paths, structural events, one-line summaries) that
+#         should surface at the pipeline level. Formatter now includes
+#         the log level, so every log line is greppable by severity.
 #
 # ================================================================
 # END_OF_HEADER
@@ -41,16 +52,35 @@ import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
 
+from config import stage_log_path
+
 DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}Z$")
 
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-def setup_logging(log_dir, subdir=None):
-    """Set up a logger that writes to a timestamped file under log_dir
-    (optionally nested under subdir) and echoes to stdout."""
-    target_dir = os.path.join(log_dir, subdir) if subdir else log_dir
-    os.makedirs(target_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    log_path = os.path.join(target_dir, f"{timestamp}.txt")
+
+def setup_logging(stage_name, run_id=None):
+    """Set up the root logger for one pipeline stage, writing to that
+    stage's own dedicated file for this run (config.stage_log_path).
+
+    run_id defaults to PIPELINE_RUN_ID (set by run_imos_pipeline.sh so
+    every stage in one pipeline run shares the same ID) or, for a
+    standalone/manual invocation, a freshly generated timestamp — same
+    behavior as before this file-per-stage convention existed.
+
+    Detail (log.info/warning/error) goes to the file only. When running
+    standalone (PIPELINE_RUN_ID unset) it's also echoed to stdout, same
+    as before, for live-tailing during manual/interactive runs. Under the
+    orchestrator (PIPELINE_RUN_ID set), stdout is left to highlight() —
+    otherwise run_imos_pipeline.sh's stage capture would duplicate every
+    line of detail into the top-level pipeline log.
+
+    Returns (log, run_id, log_path)."""
+    orchestrated = "PIPELINE_RUN_ID" in os.environ
+    run_id = run_id or os.environ.get("PIPELINE_RUN_ID") or datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    log_path = stage_log_path(stage_name, run_id)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     log = logging.getLogger()
     log.setLevel(logging.INFO)
@@ -59,17 +89,32 @@ def setup_logging(log_dir, subdir=None):
         handler.close()
         log.removeHandler(handler)
 
-    formatter = logging.Formatter("%(asctime)s %(message)s")
+    formatter = logging.Formatter(LOG_FORMAT)
 
     file_handler = logging.FileHandler(log_path, mode="a")
     file_handler.setFormatter(formatter)
     log.addHandler(file_handler)
 
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    log.addHandler(stream_handler)
+    if not orchestrated:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        log.addHandler(stream_handler)
 
-    return log
+    return log, run_id, log_path
+
+
+def highlight(log, message, level="info"):
+    """Log a headline-level message: goes into this stage's own detailed
+    log file like any other log call (so that file alone stays a
+    complete narrative), and is also printed to stdout so
+    run_imos_pipeline.sh's stage capture can surface it in the top-level
+    pipeline log. Use this only for the handful of lines that belong at
+    pipeline level — this stage's own log path, a few key file/folder
+    paths, rare structural events, and one-line run summaries. Everything
+    else should go through log.info/warning/error directly, which stays
+    file-only under the orchestrator (see setup_logging)."""
+    getattr(log, level)(message)
+    print(f"{datetime.datetime.now().strftime(TIMESTAMP_FORMAT)} [{level.upper()}] {message}", flush=True)
 
 
 def get_s3_client():

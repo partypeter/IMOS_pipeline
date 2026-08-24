@@ -25,6 +25,10 @@
 #    1.1: Paths and logging moved to config.py / common.py; cleanup now
 #         only ever touches dated inventory directories (previously relied
 #         on alphabetical sort ordering to spare other subdirectories).
+#    1.2: Logging overhaul — one log file per run (see common.py's
+#         setup_logging), with a handful of highlight() lines (log path,
+#         manifest date, output directory, final summary) surfaced to the
+#         top-level pipeline log; everything else stays file-only.
 #
 # ================================================================
 # END_OF_HEADER
@@ -36,8 +40,8 @@ import json
 import os
 import shutil
 
-from common import DATE_DIR_RE, get_s3_client, setup_logging
-from config import BASE_S3_PREFIX, INVENTORY_BUCKET, LOG_DIR, MANIFEST_MAIN
+from common import DATE_DIR_RE, get_s3_client, highlight, setup_logging
+from config import BASE_S3_PREFIX, INVENTORY_BUCKET, MANIFEST_MAIN
 
 
 def cleanup_old_manifests(manifest_main, log, keep=3):
@@ -63,15 +67,16 @@ def main():
     prev_date = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     manifest_prefix = f"{prev_date}T01-00Z"
 
-    log = setup_logging(LOG_DIR, os.path.join("manifest_download", manifest_prefix))
+    log, run_id, log_path = setup_logging("get_imos_manifest")
+    highlight(log, f"Log file: {log_path}")
 
     day_dir = os.path.join(MANIFEST_MAIN, manifest_prefix)
     os.makedirs(day_dir, exist_ok=True)
     existing = [f for f in os.listdir(day_dir) if f.endswith(".csv") or f.endswith(".gz")]
     if existing:
-        log.info(f"CSV or GZ files already present in {day_dir} — skipping.")
+        highlight(log, f"CSV or GZ files already present in {day_dir} — skipping.")
         return
-    log.info(f"Manifest date: {manifest_prefix}")
+    highlight(log, f"Manifest date: {manifest_prefix}")
     s3 = get_s3_client()
     manifest_key = f"{BASE_S3_PREFIX}/{manifest_prefix}/manifest.json"
     manifest_local = os.path.join(day_dir, "manifest.json")
@@ -85,7 +90,7 @@ def main():
     # final colon.
     dest_bucket = manifest["destinationBucket"].split(":::")[-1]
     log.info(f"Destination bucket: {dest_bucket}")
-    log.info(f"Output directory:   {day_dir}")
+    highlight(log, f"Output directory: {day_dir}")
     for entry in manifest["files"]:
         key = entry["key"]
         local_gz = os.path.join(day_dir, os.path.basename(key))
@@ -96,7 +101,7 @@ def main():
             shutil.copyfileobj(f_in, f_out)
         os.remove(local_gz)
         log.info(f"decompressed: {local_gz} -> {local_csv}")
-    log.info("Done.")
+    highlight(log, f"Done — fetched {len(manifest['files'])} inventory file(s) into {day_dir}")
 
     cleanup_old_manifests(MANIFEST_MAIN, log)
 

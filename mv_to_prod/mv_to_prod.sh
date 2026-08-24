@@ -60,6 +60,10 @@
 #           counts are now derived from the log's tagged lines after
 #           the pass completes, since counters can't be shared across
 #           the parallel worker processes.
+#    2.2: log_path (a directory the caller wanted a timestamped filename
+#         built inside) replaced by log_file (the exact file to write) —
+#         the caller now decides the full path, so this script no longer
+#         needs to generate its own timestamp.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -93,8 +97,8 @@
 # MAIN
 # ===============================================================
 
-# Create timestamped log file in the log folder set by coordinator.sh
-log_file="${log_path}/$(date +%Y%m%d_%H%M%S).log"
+# log_file (the exact file to write) is set by coordinator.sh and passed
+# in via the environment — nothing to build here.
 
 # Redirect all output to log file only (PBS output log will be empty)
 exec >> "$log_file" 2>&1

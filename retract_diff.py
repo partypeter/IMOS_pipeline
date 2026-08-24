@@ -79,6 +79,11 @@
 #         persistent manifests live on /g/data mounted over the network
 #         onto the datamover VM, where a brief hiccup can surface as a
 #         spurious mid-read error.
+#    1.4: Logging overhaul — one log file per run (see common.py's
+#         setup_logging), with a handful of highlight() lines (log path,
+#         inventory date, outgoing directory, the PIPELINE_ABORT alarm,
+#         final summary) surfaced to the top-level pipeline log;
+#         everything else stays file-only.
 #
 # ================================================================
 # END_OF_HEADER
@@ -91,10 +96,9 @@ import shutil
 import sys
 import time
 
-from common import find_latest_date_dir, peak_memory_gb, retry, setup_logging
+from common import find_latest_date_dir, highlight, peak_memory_gb, retry, setup_logging
 from config import (
     IMOS_PREFIX,
-    LOG_DIR,
     MANIFEST_MAIN,
     MIN_LIVE_INVENTORY_RATIO,
     NCI_MANIFEST,
@@ -251,11 +255,12 @@ def main():
     date_dir = os.path.join(MANIFEST_MAIN, date_dir_name)
     run_datestamp = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    log = setup_logging(LOG_DIR, os.path.join("retract_diff", date_dir_name))
-    log.info(f"Using inventory date: {date_dir_name}")
+    log, run_id, log_path = setup_logging("retract_diff")
+    highlight(log, f"Log file: {log_path}")
+    highlight(log, f"Using inventory date: {date_dir_name}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
     log.info(f"STAGING_BASE  = {STAGING_BASE}")
-    log.info(f"OUTGOING_BASE = {OUTGOING_BASE}")
+    highlight(log, f"OUTGOING_BASE: {OUTGOING_BASE}")
 
     live_counts = stream_inventory_keys_to_scratch(date_dir, RETRACT_SCRATCH_DIR, log)
     persistent_counts = count_persistent_entries_by_prefix(NCI_MANIFEST)
@@ -264,12 +269,14 @@ def main():
     total_persistent_entries = sum(persistent_counts.values())
     if total_persistent_entries > 0 and total_live_keys < total_persistent_entries * MIN_LIVE_INVENTORY_RATIO:
         ratio = total_live_keys / total_persistent_entries
-        log.error(
+        highlight(
+            log,
             f"[ALARM] PIPELINE_ABORT: latest inventory has only {total_live_keys} live key(s) under "
             f"{IMOS_PREFIX}, but persistent manifests currently track {total_persistent_entries} "
             f"({ratio:.0%}, below the {MIN_LIVE_INVENTORY_RATIO:.0%} minimum). This looks like an "
             f"incomplete or broken inventory scan rather than genuine mass retraction — aborting "
-            f"without touching any files or manifests."
+            f"without touching any files or manifests.",
+            level="error",
         )
         shutil.rmtree(RETRACT_SCRATCH_DIR, ignore_errors=True)
         sys.exit(1)
@@ -293,15 +300,15 @@ def main():
         total_retracted += retry(process_manifest, prefix, live_keys, run_datestamp, log)
         live_keys = None  # release before moving to the next prefix
 
-    log.info(f"Total retracted: {total_retracted}")
-
     shutil.rmtree(RETRACT_SCRATCH_DIR, ignore_errors=True)
     cleanup_old_outgoing(OUTGOING_BASE, OUTGOING_RETENTION_DAYS, log)
 
     elapsed = (time.perf_counter() - start) / 60
-    log.info(f"Elapsed: {elapsed:.1f} minutes")
-    log.info(f"Peak RAM: {peak_memory_gb():.2f} GB")
-    log.info("Done.")
+    highlight(
+        log,
+        f"Done — {total_retracted} entrie(s) retracted in {elapsed:.1f} min "
+        f"(peak RAM {peak_memory_gb():.2f} GB)",
+    )
 
 
 if __name__ == "__main__":

@@ -44,7 +44,8 @@
 #    checksum verification was possible.
 #
 #    Everything — per-file speed, per-file checksum result, and an overall
-#    summary — goes to a single timestamped log file under LOG_DIR.
+#    summary — goes to a single log file for this run (see common.py's
+#    setup_logging / config.py's stage_log_path).
 #
 # REQUIRES
 #    boto3, awscrt (for CRC32C/CRC64NVME verification when available;
@@ -56,6 +57,11 @@
 #         merge_temp_into_persistent now de-duplicates each persistent
 #         manifest after appending (previously a plain append with no
 #         duplicate check).
+#    1.2: Logging overhaul — one log file per run (see common.py's
+#         setup_logging), with a handful of highlight() lines (log path,
+#         output directory, hourly progress, merge failures, final
+#         summary) surfaced to the top-level pipeline log; everything
+#         else stays file-only.
 #
 # ================================================================
 # END_OF_HEADER
@@ -74,8 +80,8 @@ try:
 except ImportError:
     have_crt_checksums = False
 
-from common import dedupe_manifest, get_s3_client, peak_memory_gb, setup_logging
-from config import LOG_DIR, NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR
+from common import dedupe_manifest, get_s3_client, highlight, peak_memory_gb, setup_logging
+from config import NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR
 
 chunk_size = 8 * 1024 * 1024  # 8 MB
 progress_interval = 3600  # seconds — how often to log a running speed estimate
@@ -175,14 +181,19 @@ def merge_temp_into_persistent(log):
 
             dedupe_manifest(persistent_csv, log)
         except Exception as e:
-            log.error(f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place")
+            highlight(
+                log,
+                f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place",
+                level="error",
+            )
 
 
 def main():
     overall_start = time.perf_counter()
-    log = setup_logging(LOG_DIR, "download")
+    log, run_id, log_path = setup_logging("download")
+    highlight(log, f"Log file: {log_path}")
     log.info(f"TEMP_DIR = {TEMP_DIR}")
-    log.info(f"OUTDIR   = {OUTDIR}")
+    highlight(log, f"OUTDIR: {OUTDIR}")
 
     os.makedirs(OUTDIR, exist_ok=True)
 
@@ -204,9 +215,10 @@ def main():
         if now - last_report >= progress_interval:
             elapsed_so_far = now - overall_start
             speed_so_far = (total_bytes / (1024 * 1024)) / elapsed_so_far if elapsed_so_far > 0 else 0.0
-            log.info(
+            highlight(
+                log,
                 f"Progress: {total_files} file(s) ok, {total_failed} failed, {total_bytes / (1024 * 1024):.2f} MB, "
-                f"{elapsed_so_far / 3600:.2f}h elapsed, {speed_so_far:.2f} MB/s average so far"
+                f"{elapsed_so_far / 3600:.2f}h elapsed, {speed_so_far:.2f} MB/s average so far",
             )
             last_report = now
 
@@ -216,10 +228,11 @@ def main():
     overall_elapsed = time.perf_counter() - overall_start
     overall_speed = (total_bytes / (1024 * 1024)) / overall_elapsed if overall_elapsed > 0 else 0.0
 
-    log.info(
-        f"Done. {total_files} file(s) ok, {total_failed} failed, {total_bytes / (1024 * 1024):.2f} MB, "
+    highlight(
+        log,
+        f"Done — {total_files} file(s) ok, {total_failed} failed, {total_bytes / (1024 * 1024):.2f} MB, "
         f"{overall_elapsed:.2f}s total, {overall_speed:.2f} MB/s average, "
-        f"{peak_memory_gb():.2f} GB peak RAM"
+        f"{peak_memory_gb():.2f} GB peak RAM",
     )
 
 

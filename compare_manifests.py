@@ -52,6 +52,10 @@
 #         persistent manifest is too large to hold in memory (fixes an
 #         OOM on the AUV prefix); the in-memory path is unchanged for
 #         every other prefix.
+#    1.3: Logging overhaul — one log file per run (see common.py's
+#         setup_logging), with a handful of highlight() lines (log path,
+#         inventory date, new/large manifests, final summary) surfaced to
+#         the top-level pipeline log; everything else stays file-only.
 #
 # ================================================================
 # END_OF_HEADER
@@ -62,12 +66,11 @@ import os
 import subprocess
 import time
 
-from common import count_csv_rows, find_latest_date_dir, get_s3_client, peak_memory_gb, read_csv_rows, setup_logging
+from common import count_csv_rows, find_latest_date_dir, get_s3_client, highlight, peak_memory_gb, read_csv_rows, setup_logging
 from config import (
     COMPARE_SCRATCH_DIR,
     IMOS_PREFIX,
     LARGE_PREFIX_ROW_THRESHOLD,
-    LOG_DIR,
     MANIFEST_MAIN,
     NCI_MANIFEST,
     SOURCE_BUCKET,
@@ -179,8 +182,9 @@ def main():
         return
     date_dir = os.path.join(MANIFEST_MAIN, date_dir_name)
 
-    log = setup_logging(LOG_DIR, os.path.join("manifest_comparison", date_dir_name))
-    log.info(f"Using inventory date: {date_dir_name}")
+    log, run_id, log_path = setup_logging("compare_manifests")
+    highlight(log, f"Log file: {log_path}")
+    highlight(log, f"Using inventory date: {date_dir_name}")
     log.info(f"MANIFEST_MAIN = {MANIFEST_MAIN}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
     log.info(f"TEMP_DIR      = {TEMP_DIR}")
@@ -215,13 +219,14 @@ def main():
         if not os.path.exists(shard_csv):
             with open(shard_csv, "w", newline="") as f:
                 csv.writer(f).writerow(["filepath", "checksum"])
-            log.info(f"Created new manifest for prefix '{prefix}': {shard_csv}")
+            highlight(log, f"Created new manifest for prefix '{prefix}': {shard_csv}")
 
         row_count = count_csv_rows(shard_csv)
         if row_count > LARGE_PREFIX_ROW_THRESHOLD:
-            log.info(
+            highlight(
+                log,
                 f"{prefix}: {row_count} rows exceeds LARGE_PREFIX_ROW_THRESHOLD "
-                f"({LARGE_PREFIX_ROW_THRESHOLD}) — using disk-based diff"
+                f"({LARGE_PREFIX_ROW_THRESHOLD}) — using disk-based diff",
             )
             large_prefixes[prefix] = prepare_large_prefix_reference(prefix, shard_csv, COMPARE_SCRATCH_DIR)
         else:
@@ -308,9 +313,13 @@ def main():
             log.info(f"{prefix}: wrote {count} new file(s) to temp manifest")
 
     elapsed = (time.perf_counter() - start) / 60
-    log.info(f"Elapsed: {elapsed:.1f} minutes")
-    log.info(f"Peak RAM: {peak_memory_gb():.2f} GB")
-    log.info("Done.")
+    total_new = sum(new_counts.values())
+    prefixes_with_new = sum(1 for c in new_counts.values() if c)
+    highlight(
+        log,
+        f"Done — {total_new} new file(s) queued across {prefixes_with_new} prefix(es) "
+        f"in {elapsed:.1f} min (peak RAM {peak_memory_gb():.2f} GB)",
+    )
 
 
 if __name__ == "__main__":
