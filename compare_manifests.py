@@ -25,7 +25,13 @@
 #
 #    Assumes the whole-bucket inventory CSVs for the date being used have
 #    already been downloaded and decompressed (see get_imos_manifest.py)
-#    into MANIFEST_MAIN/<date>/*.csv.
+#    into INVENTORY_DIR/<date>/*.csv.
+#
+#    EXCLUDED_PREFIXES (config.py) are filtered out of prefix discovery
+#    entirely, so they never get a persistent manifest and nothing new is
+#    ever queued for them. Anything already tracked for an excluded
+#    prefix from before it was excluded is cleaned up by retract_diff.py,
+#    not here.
 #
 #    Persistent manifests live at nci_imos_manifest/<prefix>.csv
 #    Temp manifests live at       nci_imos_manifest/temp/<prefix>.csv
@@ -56,6 +62,11 @@
 #         setup_logging), with a handful of highlight() lines (log path,
 #         inventory date, new/large manifests, final summary) surfaced to
 #         the top-level pipeline log; everything else stays file-only.
+#    1.4: Dated inventory directories now live under INVENTORY_DIR
+#         (config.py), part of the final production folder structure.
+#         get_imos_prefixes() now filters out EXCLUDED_PREFIXES, so an
+#         excluded prefix (e.g. eMII) never gets a persistent manifest or
+#         any new files queued.
 #
 # ================================================================
 # END_OF_HEADER
@@ -69,9 +80,10 @@ import time
 from common import count_csv_rows, find_latest_date_dir, get_s3_client, highlight, peak_memory_gb, read_csv_rows, setup_logging
 from config import (
     COMPARE_SCRATCH_DIR,
+    EXCLUDED_PREFIXES,
     IMOS_PREFIX,
+    INVENTORY_DIR,
     LARGE_PREFIX_ROW_THRESHOLD,
-    MANIFEST_MAIN,
     NCI_MANIFEST,
     SOURCE_BUCKET,
     TEMP_DIR,
@@ -79,13 +91,15 @@ from config import (
 
 
 def get_imos_prefixes(s3):
-    """Top-level folder names under s3://imos-data/IMOS/, e.g. 'AATAMS'."""
+    """Top-level folder names under s3://imos-data/IMOS/, e.g. 'AATAMS' —
+    excluding EXCLUDED_PREFIXES (config.py), which must never be tracked
+    or downloaded regardless of what's present upstream."""
     resp = s3.list_objects_v2(Bucket=SOURCE_BUCKET, Prefix=IMOS_PREFIX, Delimiter="/")
     prefixes = []
     for cp in resp.get("CommonPrefixes", []):
         # cp["Prefix"] looks like "IMOS/AATAMS/"
         name = cp["Prefix"][len(IMOS_PREFIX):].rstrip("/")
-        if name:
+        if name and name not in EXCLUDED_PREFIXES:
             prefixes.append(name)
     return prefixes
 
@@ -176,16 +190,16 @@ def reconcile_large_prefix(prefix, raw_inventory_path, sorted_persistent_path, s
 
 def main():
     start = time.perf_counter()
-    date_dir_name = find_latest_date_dir(MANIFEST_MAIN)
+    date_dir_name = find_latest_date_dir(INVENTORY_DIR)
     if date_dir_name is None:
-        print("No dated inventory folder found under", MANIFEST_MAIN)
+        print("No dated inventory folder found under", INVENTORY_DIR)
         return
-    date_dir = os.path.join(MANIFEST_MAIN, date_dir_name)
+    date_dir = os.path.join(INVENTORY_DIR, date_dir_name)
 
     log, run_id, log_path = setup_logging("compare_manifests")
     highlight(log, f"Log file: {log_path}")
     highlight(log, f"Using inventory date: {date_dir_name}")
-    log.info(f"MANIFEST_MAIN = {MANIFEST_MAIN}")
+    highlight(log, f"Excluded prefix(es) (never tracked): {', '.join(sorted(EXCLUDED_PREFIXES)) or 'none'}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
     log.info(f"TEMP_DIR      = {TEMP_DIR}")
 

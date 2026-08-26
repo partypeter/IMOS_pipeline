@@ -30,6 +30,11 @@
 #         The inventory batch this run is moving (previously only in the
 #         log folder name) and the log file path are now echoed near the
 #         top instead.
+#    1.3: Final production folder structure: dated inventory folders now
+#         live under INVENTORY_DIR (not directly under MANIFEST_MAIN);
+#         target_path now sources AODN_BASE (renamed from STAGING_BASE —
+#         it's the final hosting location, not an intermediate staging
+#         step).
 #
 # ================================================================
 # END_OF_HEADER
@@ -53,12 +58,12 @@ RUN_ID="${PIPELINE_RUN_ID:-$(date +%Y%m%d%H%M%S)}"
 
 # Inventory batch this run is moving — informational only now (used to be
 # baked into the log folder name; see log_file below).
-latest=$(find "${MANIFEST_MAIN}" -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}Z' -printf '%f\n' | sort | tail -n 1)
+latest=$(find "${INVENTORY_DIR}" -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}Z' -printf '%f\n' | sort | tail -n 1)
 log INFO "Inventory batch: ${latest}"
 
 # Source and target paths (no trailing slash)
 source_path="${OUTDIR}"
-target_path="${STAGING_BASE}"
+target_path="${AODN_BASE}"
 
 # Exact log file to write (created automatically before submission)
 log_file="$(stage_log_path mv_to_prod "${RUN_ID}")"

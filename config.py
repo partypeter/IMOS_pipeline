@@ -25,6 +25,16 @@
 #         an earlier mv_to_prod log-path regression). Added
 #         stage_log_path(), the canonical per-run log path formula shared
 #         by every stage — mirrored in config.sh.
+#    1.2: Switched to the final production folder structure: MANIFEST_MAIN
+#         now points at admin/ops/ (was admin/globus/test/); dated
+#         inventory folders moved to their own INVENTORY_DIR subfolder
+#         instead of living directly under MANIFEST_MAIN; OUTDIR is now a
+#         standalone path (admin/incoming) instead of nested under
+#         MANIFEST_MAIN; STAGING_BASE renamed AODN_BASE and repointed at
+#         the final hosting location (IMOS_AODN), since it's no longer an
+#         intermediate staging step. Added EXCLUDED_PREFIXES (currently
+#         just eMII, per an explicit exclusion directive) — see
+#         compare_manifests.py and retract_diff.py for how it's enforced.
 #
 # ================================================================
 # END_OF_HEADER
@@ -38,12 +48,28 @@ INVENTORY_BUCKET = "imos-data-inventory"
 BASE_S3_PREFIX = "imos-data/Daily_Inventory_Whole_Bucket"
 IMOS_PREFIX = "IMOS/"
 
+# Top-level IMOS/<prefix>/ folders that must never be tracked or
+# downloaded, regardless of what's present upstream. compare_manifests.py
+# filters these out of prefix discovery so nothing new is ever queued for
+# them; retract_diff.py actively purges any already-tracked entries for
+# them on every run (see both files' docstrings).
+EXCLUDED_PREFIXES = {"eMII"}
+
 # Base directory tree for manifests, downloads, and logs
-MANIFEST_MAIN = "/g/data/sh74/admin/globus/test/"
+MANIFEST_MAIN = "/g/data/sh74/admin/ops/"
+
+# Dated whole-bucket inventory folders (get_imos_manifest.py's output;
+# compare_manifests.py/retract_diff.py's input) live under here, not
+# directly under MANIFEST_MAIN.
+INVENTORY_DIR = os.path.join(MANIFEST_MAIN, "IMOS_inventory")
 
 NCI_MANIFEST = os.path.join(MANIFEST_MAIN, "nci_imos_manifest")
 TEMP_DIR = os.path.join(NCI_MANIFEST, "temp")
-OUTDIR = os.path.join(MANIFEST_MAIN, "download_test_datamover")
+
+# download.py's download destination / mv_to_prod's source_path — a
+# standalone path, not nested under MANIFEST_MAIN.
+OUTDIR = "/g/data/sh74/admin/incoming"
+
 LOGS_BASE = os.path.join(MANIFEST_MAIN, "logs")
 
 
@@ -63,10 +89,11 @@ def stage_log_path(stage_name, run_id):
 # tmpfs (RAM-backed) on HPC/VM nodes, which would defeat the purpose.
 RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
 
-# Where mv_to_prod lands files (mirrors mv_to_prod/coordinator.sh's
-# target_path, which now sources this same value via config.sh) and where
-# retract_diff.py moves files that have been retracted upstream.
-STAGING_BASE = "/g/data/sh74/admin/staging"
+# Where mv_to_prod lands files — the final, permanent hosting location
+# (mirrors mv_to_prod/coordinator.sh's target_path, which sources this
+# same value via config.sh) — and where retract_diff.py looks for
+# already-downloaded files to move when they're retracted upstream.
+AODN_BASE = "/g/data/sh74/IMOS_AODN"
 OUTGOING_BASE = "/g/data/sh74/admin/outgoing"
 OUTGOING_RETENTION_DAYS = 28
 

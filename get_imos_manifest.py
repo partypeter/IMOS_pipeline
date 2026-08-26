@@ -10,12 +10,12 @@
 # DESCRIPTION
 #    Finds the previous day's S3 Inventory manifest for the IMOS daily
 #    whole-bucket inventory, downloads it, then downloads and decompresses
-#    every data file it lists into a dated directory under MANIFEST_MAIN
+#    every data file it lists into a dated directory under INVENTORY_DIR
 #    (config.py). This is stage 1 of the pipeline — its output feeds
 #    compare_manifests.py.
 #
 #    Also prunes old dated inventory directories, keeping only the most
-#    recent few, so MANIFEST_MAIN doesn't grow unbounded.
+#    recent few, so INVENTORY_DIR doesn't grow unbounded.
 #
 # REQUIRES
 #    boto3 (pip install boto3 --break-system-packages)
@@ -29,6 +29,9 @@
 #         setup_logging), with a handful of highlight() lines (log path,
 #         manifest date, output directory, final summary) surfaced to the
 #         top-level pipeline log; everything else stays file-only.
+#    1.3: Dated inventory directories now live under their own
+#         INVENTORY_DIR (config.py), part of the final production folder
+#         structure — previously directly under MANIFEST_MAIN.
 #
 # ================================================================
 # END_OF_HEADER
@@ -41,28 +44,28 @@ import os
 import shutil
 
 from common import DATE_DIR_RE, get_s3_client, highlight, setup_logging
-from config import BASE_S3_PREFIX, INVENTORY_BUCKET, MANIFEST_MAIN
+from config import BASE_S3_PREFIX, INVENTORY_BUCKET, INVENTORY_DIR, MANIFEST_MAIN
 
 
-def cleanup_old_manifests(manifest_main, log, keep=3):
+def cleanup_old_manifests(inventory_dir, log, keep=3):
     """Remove all but the `keep` most recent dated inventory directories.
     Only directories matching the dated-inventory name pattern are ever
-    considered, so other subdirectories under manifest_main (e.g.
-    nci_imos_manifest, download_test_datamover, logs) are never touched."""
+    considered."""
     entries = [
-        d for d in os.listdir(manifest_main)
-        if DATE_DIR_RE.match(d) and os.path.isdir(os.path.join(manifest_main, d))
+        d for d in os.listdir(inventory_dir)
+        if DATE_DIR_RE.match(d) and os.path.isdir(os.path.join(inventory_dir, d))
     ]
     entries.sort()
     to_remove = entries[:-keep] if len(entries) > keep else []
     for d in to_remove:
-        path = os.path.join(manifest_main, d)
+        path = os.path.join(inventory_dir, d)
         shutil.rmtree(path)
         log.info(f"removed old manifest dir: {path}")
 
 
 def main():
     os.makedirs(MANIFEST_MAIN, exist_ok=True)
+    os.makedirs(INVENTORY_DIR, exist_ok=True)
 
     prev_date = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     manifest_prefix = f"{prev_date}T01-00Z"
@@ -70,7 +73,7 @@ def main():
     log, run_id, log_path = setup_logging("get_imos_manifest")
     highlight(log, f"Log file: {log_path}")
 
-    day_dir = os.path.join(MANIFEST_MAIN, manifest_prefix)
+    day_dir = os.path.join(INVENTORY_DIR, manifest_prefix)
     os.makedirs(day_dir, exist_ok=True)
     existing = [f for f in os.listdir(day_dir) if f.endswith(".csv") or f.endswith(".gz")]
     if existing:
@@ -103,7 +106,7 @@ def main():
         log.info(f"decompressed: {local_gz} -> {local_csv}")
     highlight(log, f"Done — fetched {len(manifest['files'])} inventory file(s) into {day_dir}")
 
-    cleanup_old_manifests(MANIFEST_MAIN, log)
+    cleanup_old_manifests(INVENTORY_DIR, log)
 
 
 if __name__ == "__main__":

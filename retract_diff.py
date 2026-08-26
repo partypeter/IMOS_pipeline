@@ -15,10 +15,10 @@
 #    run after mv_to_prod has moved newly-downloaded files into staging.
 #
 #    For each retracted filepath (e.g. "IMOS/AATAMS/x.nc"):
-#      - If it exists under STAGING_BASE, it is moved to
+#      - If it exists under AODN_BASE, it is moved to
 #        OUTGOING_BASE/<run_datestamp>/IMOS/AATAMS/x.nc, preserving the
 #        full key structure (no flattening).
-#      - If it does not exist under STAGING_BASE, that's an expected case
+#      - If it does not exist under AODN_BASE, that's an expected case
 #        rather than an error: download.py deliberately merges temp
 #        manifests into the persistent manifest even for files that failed
 #        to download (e.g. already retracted before ever being fetched), so
@@ -45,6 +45,16 @@
 #        latest inventory has zero live keys for that prefix (while other
 #        prefixes look normal), that prefix alone is skipped and logged
 #        rather than treated as a full retraction.
+#
+#    EXCLUDED_PREFIXES (config.py) deliberately bypass both guards: a
+#    prefix like eMII genuinely still exists upstream (so its real live
+#    key count is nonzero, and neither guard would ever fire for it on its
+#    own), but the exclusion policy means it must be purged regardless.
+#    Both guards' sums exclude EXCLUDED_PREFIXES entirely, and each
+#    excluded prefix's persistent manifest is force-retracted in full
+#    every run (see the per-prefix loop in main()) — this is a deliberate
+#    policy exclusion, not the kind of scan anomaly these guards exist to
+#    catch.
 #
 # MEMORY
 #    Unlike compare_manifests.py's shard_existing (which only needs to hold
@@ -84,6 +94,13 @@
 #         inventory date, outgoing directory, the PIPELINE_ABORT alarm,
 #         final summary) surfaced to the top-level pipeline log;
 #         everything else stays file-only.
+#    1.5: Dated inventory directories now live under INVENTORY_DIR
+#         (config.py), part of the final production folder structure.
+#         STAGING_BASE renamed AODN_BASE (final hosting location, not an
+#         intermediate staging step). Added EXCLUDED_PREFIXES handling:
+#         an excluded prefix (e.g. eMII) is force-retracted in full every
+#         run, bypassing both safety guards (see SAFETY GUARDS above) —
+#         this is how already-tracked excluded data gets purged.
 #
 # ================================================================
 # END_OF_HEADER
@@ -98,14 +115,15 @@ import time
 
 from common import find_latest_date_dir, highlight, peak_memory_gb, retry, setup_logging
 from config import (
+    AODN_BASE,
+    EXCLUDED_PREFIXES,
     IMOS_PREFIX,
-    MANIFEST_MAIN,
+    INVENTORY_DIR,
     MIN_LIVE_INVENTORY_RATIO,
     NCI_MANIFEST,
     OUTGOING_BASE,
     OUTGOING_RETENTION_DAYS,
     RETRACT_SCRATCH_DIR,
-    STAGING_BASE,
 )
 
 
@@ -179,12 +197,12 @@ def count_persistent_entries_by_prefix(nci_manifest):
 
 
 def move_retracted_file(key, run_datestamp, log):
-    """Move a retracted file from staging to the outgoing quarantine,
+    """Move a retracted file from AODN_BASE to the outgoing quarantine,
     preserving its key structure. Returns True if a file was actually
     moved, False if nothing was found on disk at the expected location."""
-    src = os.path.join(STAGING_BASE, key)
+    src = os.path.join(AODN_BASE, key)
     if not os.path.exists(src):
-        log.warning(f"{key}: retracted, no local file found under {STAGING_BASE} — removing from manifest only")
+        log.warning(f"{key}: retracted, no local file found under {AODN_BASE} — removing from manifest only")
         return False
 
     dst = os.path.join(OUTGOING_BASE, run_datestamp, key)
@@ -248,25 +266,28 @@ def cleanup_old_outgoing(outgoing_base, retention_days, log):
 
 def main():
     start = time.perf_counter()
-    date_dir_name = find_latest_date_dir(MANIFEST_MAIN)
+    date_dir_name = find_latest_date_dir(INVENTORY_DIR)
     if date_dir_name is None:
-        print("No dated inventory folder found under", MANIFEST_MAIN)
+        print("No dated inventory folder found under", INVENTORY_DIR)
         return
-    date_dir = os.path.join(MANIFEST_MAIN, date_dir_name)
+    date_dir = os.path.join(INVENTORY_DIR, date_dir_name)
     run_datestamp = datetime.datetime.now().strftime("%Y-%m-%d")
 
     log, run_id, log_path = setup_logging("retract_diff")
     highlight(log, f"Log file: {log_path}")
     highlight(log, f"Using inventory date: {date_dir_name}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
-    log.info(f"STAGING_BASE  = {STAGING_BASE}")
+    log.info(f"AODN_BASE     = {AODN_BASE}")
     highlight(log, f"OUTGOING_BASE: {OUTGOING_BASE}")
 
     live_counts = stream_inventory_keys_to_scratch(date_dir, RETRACT_SCRATCH_DIR, log)
     persistent_counts = count_persistent_entries_by_prefix(NCI_MANIFEST)
 
-    total_live_keys = sum(live_counts.values())
-    total_persistent_entries = sum(persistent_counts.values())
+    # EXCLUDED_PREFIXES are deliberately purged regardless of the real
+    # upstream state (see SAFETY GUARDS above) — exclude them from both
+    # guard sums so purging one doesn't itself look like a broken scan.
+    total_live_keys = sum(v for k, v in live_counts.items() if k not in EXCLUDED_PREFIXES)
+    total_persistent_entries = sum(v for k, v in persistent_counts.items() if k not in EXCLUDED_PREFIXES)
     if total_persistent_entries > 0 and total_live_keys < total_persistent_entries * MIN_LIVE_INVENTORY_RATIO:
         ratio = total_live_keys / total_persistent_entries
         highlight(
@@ -283,6 +304,11 @@ def main():
 
     total_retracted = 0
     for prefix, entry_count in persistent_counts.items():
+        if prefix in EXCLUDED_PREFIXES:
+            if entry_count:
+                highlight(log, f"{prefix}: excluded prefix — purging all {entry_count} tracked entrie(s)")
+                total_retracted += retry(process_manifest, prefix, set(), run_datestamp, log)
+            continue
         if live_counts.get(prefix, 0) == 0 and entry_count:
             log.warning(
                 f"{prefix}: no live keys found in the latest inventory for this prefix "
