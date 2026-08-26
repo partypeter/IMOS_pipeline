@@ -64,6 +64,17 @@
 #         built inside) replaced by log_file (the exact file to write) —
 #         the caller now decides the full path, so this script no longer
 #         needs to generate its own timestamp.
+#    2.3: Fixed dry-run mode re-scanning entire moved-whole subtrees in
+#         pass 2. A real run's pass 1 mv makes a moved directory vanish
+#         from source_path, so pass 2 never sees its files; dry run skips
+#         the mv, so those files were all still there, and every one of
+#         them hit the "destination missing" warning path (a nonsensical
+#         false positive) — for a large subtree, this could turn a
+#         near-instant dry run into one that churns through every file
+#         underneath it. Pass 1 now records each directory it logs as
+#         "would move" during a dry run, and pass 2's find prunes exactly
+#         those paths, mirroring what a real run would already do on its
+#         own.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -119,6 +130,14 @@ count_files_moved=0
 count_files_overwritten=0
 count_files_skipped=0
 
+# Dry run only: top-level directories pass 1 logs as "would move" but
+# leaves in place. A real mv would make these vanish from source_path
+# entirely, so pass 2 would never see their files; dry run has to
+# exclude them from its own find below instead (see pass 2), or it
+# re-scans everything underneath them and hits a nonsensical
+# "destination missing" warning for every single file.
+dry_run_pruned_dirs=()
+
 # -------------------------------------------------------
 # PASS 1 — BFS: move whole directories that are missing
 #          at the destination
@@ -147,6 +166,8 @@ while [ "$queue_idx" -lt ${#queue[@]} ]; do
       echo "         -> ${dst_parent}/"
       if [ "$dry_run" = false ]; then
         mv "$entry" "$dst_parent/"
+      else
+        dry_run_pruned_dirs+=("$entry")
       fi
       (( count_dirs_moved++ ))
 
@@ -228,7 +249,23 @@ export source_path target_path overwrite dry_run
 pass2_parallel_jobs="${pass2_parallel_jobs:-8}"
 pass2_batch_size="${pass2_batch_size:-100}"
 
-find "$source_path" \( -type f -o -type l \) | sort | \
+# Dry run: prune dry_run_pruned_dirs out of this scan (see where it's
+# populated in pass 1 above) — otherwise every file under a directory
+# pass 1 already logged as "would move" gets re-scanned here and hits a
+# nonsensical "destination missing" warning instead of being correctly
+# treated as already handled. No-op (empty array) on a real run, where
+# those directories are simply gone from source_path already.
+find_prune_args=()
+if [ "${#dry_run_pruned_dirs[@]}" -gt 0 ]; then
+  find_prune_args+=("(")
+  for d in "${dry_run_pruned_dirs[@]}"; do
+    [ "${#find_prune_args[@]}" -gt 1 ] && find_prune_args+=("-o")
+    find_prune_args+=("-path" "$d")
+  done
+  find_prune_args+=(")" "-prune" "-o")
+fi
+
+find "$source_path" "${find_prune_args[@]}" \( -type f -o -type l \) -print | sort | \
   xargs -P "$pass2_parallel_jobs" -n "$pass2_batch_size" bash -c '
     for file in "$@"; do
       move_one_file "$file"
