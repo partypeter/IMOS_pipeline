@@ -9,12 +9,20 @@
 #
 # DESCRIPTION
 #    Compares the latest local S3 inventory CSVs against per-prefix NCI
-#    manifests (one CSV per top-level IMOS/<prefix>/ folder), and writes
-#    any files found in the inventory but missing from the relevant
-#    manifest into a per-prefix temp manifest under nci_imos_manifest/temp/.
-#    This is stage 2 of the pipeline ("shard diff") — its temp manifests
-#    drive download.py (stage 3), which downloads the new files and merges
-#    each temp manifest back into its persistent manifest.
+#    manifests, and writes any files found in the inventory but missing
+#    from the relevant manifest into a per-prefix temp manifest under
+#    nci_imos_manifest/temp/. This is stage 2 of the pipeline ("shard
+#    diff") — its temp manifests drive download.py (stage 3), which
+#    downloads the new files and merges each temp manifest back into its
+#    persistent manifest.
+#
+#    A "prefix" is either a top-level IMOS/<prefix>/ folder (auto-
+#    discovered — see get_imos_prefixes) or one of config.py's
+#    EXPLICIT_PREFIXES (fixed, known-in-advance roots elsewhere in the
+#    bucket, e.g. the wave buoy data under Bureau_of_Meteorology/, CSIRO/,
+#    etc.). Both kinds are resolved by config.resolve_prefix(), shared
+#    with retract_diff.py so the two can't disagree on how a key maps to
+#    a shard.
 #
 #    If a prefix already has a pending temp manifest (i.e. a previous batch
 #    hasn't been confirmed and merged yet), that prefix is skipped entirely
@@ -67,6 +75,12 @@
 #         get_imos_prefixes() now filters out EXCLUDED_PREFIXES, so an
 #         excluded prefix (e.g. eMII) never gets a persistent manifest or
 #         any new files queued.
+#    1.5: Added support for EXPLICIT_PREFIXES (config.py) — wave buoy
+#         data living under other top-level bucket folders entirely, not
+#         under IMOS/. The inventory scan now resolves each key's shard
+#         via config.resolve_prefix() instead of only ever matching
+#         IMOS_PREFIX; the tracked prefix list is now IMOS/'s
+#         auto-discovered prefixes plus EXPLICIT_PREFIXES' shard names.
 #
 # ================================================================
 # END_OF_HEADER
@@ -81,12 +95,14 @@ from common import count_csv_rows, find_latest_date_dir, get_s3_client, highligh
 from config import (
     COMPARE_SCRATCH_DIR,
     EXCLUDED_PREFIXES,
+    EXPLICIT_PREFIXES,
     IMOS_PREFIX,
     INVENTORY_DIR,
     LARGE_PREFIX_ROW_THRESHOLD,
     NCI_MANIFEST,
     SOURCE_BUCKET,
     TEMP_DIR,
+    resolve_prefix,
 )
 
 
@@ -212,8 +228,9 @@ def main():
         return
 
     s3 = get_s3_client()
-    prefixes = get_imos_prefixes(s3)
-    log.info(f"Found {len(prefixes)} IMOS prefixes")
+    explicit_prefix_names = sorted(name for name in EXPLICIT_PREFIXES.values() if name not in EXCLUDED_PREFIXES)
+    prefixes = get_imos_prefixes(s3) + explicit_prefix_names
+    log.info(f"Found {len(prefixes)} prefixes ({len(explicit_prefix_names)} explicit, rest under IMOS/)")
 
     # Phase 1: per-prefix setup. Prefixes below LARGE_PREFIX_ROW_THRESHOLD
     # keep the fast in-memory path (shard_existing); prefixes at/above it
@@ -275,12 +292,8 @@ def main():
                         continue
                     key, etag = row[1], row[4]
 
-                    if not key.startswith(IMOS_PREFIX):
-                        continue
-                    remainder = key[len(IMOS_PREFIX):]
-                    prefix = remainder.split("/", 1)[0]
-
-                    if prefix not in valid_prefixes:
+                    prefix = resolve_prefix(key)
+                    if prefix is None or prefix not in valid_prefixes:
                         continue
 
                     if prefix in large_prefixes:

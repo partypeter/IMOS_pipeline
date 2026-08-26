@@ -35,6 +35,15 @@
 #         intermediate staging step. Added EXCLUDED_PREFIXES (currently
 #         just eMII, per an explicit exclusion directive) — see
 #         compare_manifests.py and retract_diff.py for how it's enforced.
+#    1.3: Added EXPLICIT_PREFIXES and resolve_prefix() — the pipeline
+#         previously only ever tracked things under IMOS/, auto-discovered
+#         by listing that one folder. Wave buoy data lives under other
+#         top-level bucket folders entirely (e.g. Bureau_of_Meteorology/),
+#         each with one fixed, known root — no discovery needed, just an
+#         explicit root-prefix -> shard-name mapping. resolve_prefix() is
+#         the single place both IMOS/ and EXPLICIT_PREFIXES matching
+#         happens, shared by compare_manifests.py and retract_diff.py so
+#         the two can't drift apart on how a key maps to a shard.
 #
 # ================================================================
 # END_OF_HEADER
@@ -48,12 +57,62 @@ INVENTORY_BUCKET = "imos-data-inventory"
 BASE_S3_PREFIX = "imos-data/Daily_Inventory_Whole_Bucket"
 IMOS_PREFIX = "IMOS/"
 
-# Top-level IMOS/<prefix>/ folders that must never be tracked or
-# downloaded, regardless of what's present upstream. compare_manifests.py
-# filters these out of prefix discovery so nothing new is ever queued for
-# them; retract_diff.py actively purges any already-tracked entries for
-# them on every run (see both files' docstrings).
+# Non-IMOS top-level bucket folders the pipeline also tracks, each mapped
+# to its manifest shard name. Unlike IMOS/<prefix>/, which is
+# auto-discovered by listing the bucket (see compare_manifests.py's
+# get_imos_prefixes), these roots are fixed and known in advance, so
+# there's nothing to discover — every key under a given root always maps
+# to that one shard. See config.resolve_prefix().
+EXPLICIT_PREFIXES = {
+    "Bureau_of_Meteorology/WAVE-BUOYS/REALTIME/": "Bureau_of_Meteorology",
+    "CSIRO/WAVE-BUOYS/REALTIME/": "CSIRO",
+    "Deakin_University/WAVE-BUOYS/REALTIME/": "Deakin_University",
+    "Department_for_Environment_and_Water-South_Australia/WAVE-BUOYS/REALTIME/":
+        "Department_for_Environment_and_Water-South_Australia",
+    "Department_of_Environment_and_Science-Queensland/WAVE-BUOYS/REALTIME/":
+        "Department_of_Environment_and_Science-Queensland",
+    "Department_of_Planning_and_Environment-New_South_Wales/WAVE-BUOYS/REALTIME/":
+        "Department_of_Planning_and_Environment-New_South_Wales",
+    "Department_of_Planning_and_Environment-New_South_Wales/Manly_Hydraulics_Laboratory/WAVE-BUOYS/REALTIME/":
+        "Department_of_Planning_and_Environment-New_South_Wales_Manly_Hydraulics_Laboratory",
+    "Department_of_Transport-Western_Australia/WAVE-BUOYS/REALTIME/":
+        "Department_of_Transport-Western_Australia",
+    "Flinders_University/WAVE-BUOYS/REALTIME/": "Flinders_University",
+    "Gippsland-Ports-Victoria/WAVE-BUOYS/REALTIME/": "Gippsland-Ports-Victoria",
+    "Pilbara_Ports_Authority/WAVE-BUOYS/REALTIME/": "Pilbara_Ports_Authority",
+    "UWA/WAVE-BUOYS/REALTIME/": "UWA",
+}
+# Note: IMOS/COASTAL-WAVE-BUOYS/WAVE-BUOYS/REALTIME/ is NOT listed here —
+# it's under IMOS/, so it's already auto-discovered as prefix
+# "COASTAL-WAVE-BUOYS" without needing an explicit entry.
+
+# Top-level folders (shard names, not S3 paths) that must never be
+# tracked or downloaded, regardless of what's present upstream.
+# compare_manifests.py filters these out of prefix discovery so nothing
+# new is ever queued for them; retract_diff.py actively purges any
+# already-tracked entries for them on every run (see both files'
+# docstrings). Applies equally to IMOS/ and EXPLICIT_PREFIXES shards.
 EXCLUDED_PREFIXES = {"eMII"}
+
+
+def resolve_prefix(key):
+    """Map an S3 key to its manifest shard name, or None if the key isn't
+    tracked by the pipeline at all.
+
+    IMOS/-rooted keys are sharded dynamically by their first path segment
+    (e.g. "IMOS/AATAMS/x.nc" -> "AATAMS") — see compare_manifests.py's
+    get_imos_prefixes() for how those shard names get discovered.
+    EXPLICIT_PREFIXES keys map to a fixed shard name instead; checked
+    longest-root-first so a more specific nested root (e.g. the NSW/Manly
+    Hydraulics Laboratory entry) always wins over a shorter parent root,
+    should one ever be added later."""
+    if key.startswith(IMOS_PREFIX):
+        remainder = key[len(IMOS_PREFIX):]
+        return remainder.split("/", 1)[0] or None
+    for root, shard_name in sorted(EXPLICIT_PREFIXES.items(), key=lambda kv: -len(kv[0])):
+        if key.startswith(root):
+            return shard_name
+    return None
 
 # Base directory tree for manifests, downloads, and logs
 MANIFEST_MAIN = "/g/data/sh74/admin/ops/"

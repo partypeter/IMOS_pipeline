@@ -10,9 +10,13 @@
 # DESCRIPTION
 #    Reverse of compare_manifests.py's "shard diff": finds files that are
 #    recorded in a persistent manifest (nci_imos_manifest/<prefix>.csv) but
-#    are no longer present in the latest IMOS inventory — i.e. retracted
+#    are no longer present in the latest inventory — i.e. retracted
 #    upstream since they were downloaded. This is stage 5 of the pipeline,
 #    run after mv_to_prod has moved newly-downloaded files into staging.
+#
+#    Prefixes are resolved the same way as compare_manifests.py, via
+#    config.resolve_prefix() — both IMOS/-rooted and config.py's
+#    EXPLICIT_PREFIXES (e.g. wave buoy data outside IMOS/ entirely).
 #
 #    For each retracted filepath (e.g. "IMOS/AATAMS/x.nc"):
 #      - If it exists under AODN_BASE, it is moved to
@@ -101,6 +105,11 @@
 #         an excluded prefix (e.g. eMII) is force-retracted in full every
 #         run, bypassing both safety guards (see SAFETY GUARDS above) —
 #         this is how already-tracked excluded data gets purged.
+#    1.6: Added support for EXPLICIT_PREFIXES (config.py) — wave buoy
+#         data living under other top-level bucket folders entirely, not
+#         under IMOS/. The inventory scan now resolves each key's shard
+#         via config.resolve_prefix(), shared with compare_manifests.py,
+#         instead of only ever matching IMOS_PREFIX.
 #
 # ================================================================
 # END_OF_HEADER
@@ -117,13 +126,13 @@ from common import find_latest_date_dir, highlight, peak_memory_gb, retry, setup
 from config import (
     AODN_BASE,
     EXCLUDED_PREFIXES,
-    IMOS_PREFIX,
     INVENTORY_DIR,
     MIN_LIVE_INVENTORY_RATIO,
     NCI_MANIFEST,
     OUTGOING_BASE,
     OUTGOING_RETENTION_DAYS,
     RETRACT_SCRATCH_DIR,
+    resolve_prefix,
 )
 
 
@@ -148,9 +157,9 @@ def stream_inventory_keys_to_scratch(date_dir, scratch_dir, log):
                     if len(row) < 5:
                         continue
                     key = row[1]
-                    if not key.startswith(IMOS_PREFIX):
+                    prefix = resolve_prefix(key)
+                    if prefix is None:
                         continue
-                    prefix = key[len(IMOS_PREFIX):].split("/", 1)[0]
 
                     if prefix not in file_handles:
                         file_handles[prefix] = open(os.path.join(scratch_dir, f"{prefix}.keys"), "w")
@@ -292,8 +301,8 @@ def main():
         ratio = total_live_keys / total_persistent_entries
         highlight(
             log,
-            f"[ALARM] PIPELINE_ABORT: latest inventory has only {total_live_keys} live key(s) under "
-            f"{IMOS_PREFIX}, but persistent manifests currently track {total_persistent_entries} "
+            f"[ALARM] PIPELINE_ABORT: latest inventory has only {total_live_keys} tracked live key(s), "
+            f"but persistent manifests currently track {total_persistent_entries} "
             f"({ratio:.0%}, below the {MIN_LIVE_INVENTORY_RATIO:.0%} minimum). This looks like an "
             f"incomplete or broken inventory scan rather than genuine mass retraction — aborting "
             f"without touching any files or manifests.",
