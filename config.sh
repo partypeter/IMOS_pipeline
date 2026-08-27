@@ -16,12 +16,14 @@
 #    download.py, retract_diff.py) has its own config.py with the
 #    equivalent values, since bash can't import a Python module. The two
 #    files must be kept in sync by hand:
-#      MANIFEST_MAIN  <-> config.py MANIFEST_MAIN
-#      INVENTORY_DIR  <-> config.py INVENTORY_DIR
-#      LOGS_BASE      <-> config.py LOGS_BASE
-#      OUTDIR         <-> config.py OUTDIR
-#      AODN_BASE      <-> config.py AODN_BASE
-#      stage_log_path <-> config.py stage_log_path()
+#      MANIFEST_MAIN    <-> config.py MANIFEST_MAIN
+#      INVENTORY_DIR    <-> config.py INVENTORY_DIR
+#      LOGS_BASE        <-> config.py LOGS_BASE
+#      OUTDIR           <-> config.py OUTDIR
+#      AODN_BASE        <-> config.py AODN_BASE
+#      WAVE_BUOY_OUTDIR <-> config.py WAVE_BUOY_OUTDIR
+#      WAVE_BUOY_BASE   <-> config.py WAVE_BUOY_BASE
+#      stage_log_path   <-> config.py stage_log_path()
 #
 # VERSION
 #    1.0: Initial implementation
@@ -37,6 +39,9 @@
 #         standalone path (admin/incoming); STAGING_BASE renamed
 #         AODN_BASE and repointed at the final hosting location
 #         (IMOS_AODN), since it's no longer an intermediate staging step.
+#    1.3: Added WAVE_BUOY_OUTDIR/WAVE_BUOY_BASE — wave buoy data now
+#         lands in its own destination, drained by its own mv_to_prod
+#         pass (see coordinator.sh), separate from AODN_BASE.
 #
 # ================================================================
 # END_OF_HEADER
@@ -54,6 +59,13 @@ LOGS_BASE="${MANIFEST_MAIN}logs"
 # files it downloads (mv_to_prod's source_path).
 AODN_BASE="/g/data/sh74/IMOS_AODN"
 OUTDIR="/g/data/sh74/admin/incoming"
+
+# Wave buoy data's own destination, kept separate from AODN_BASE/OUTDIR
+# per an explicit request (see coordinator.sh's second mv_to_prod route).
+# WAVE_BUOY_BASE is currently an interim staging location — will move to
+# /g/data/sh74/wave_buoy_data once finalised.
+WAVE_BUOY_OUTDIR="${OUTDIR}/wave_buoy"
+WAVE_BUOY_BASE="/g/data/sh74/admin/staging/wave_buoy_data"
 
 # Canonical per-run log file path for one pipeline stage — mirrors
 # config.py's stage_log_path(). Usage: stage_log_path <stage_name> <run_id>

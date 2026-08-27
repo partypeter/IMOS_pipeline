@@ -48,6 +48,11 @@
 #         disk-based path on manifests above LARGE_PREFIX_ROW_THRESHOLD —
 #         fixes an OOM (download.py's post-merge dedup fully materializing
 #         AUV.csv, ~82M rows, in memory).
+#    1.5: Added WAVE_BUOY_OUTDIR/WAVE_BUOY_BASE and is_wave_buoy_key() —
+#         wave buoy data (EXPLICIT_PREFIXES) now lands in its own
+#         destination, separate from AODN_BASE, per an explicit request.
+#         download.py and retract_diff.py both route on is_wave_buoy_key()
+#         so the two agree on where a given key's file actually lives.
 #
 # ================================================================
 # END_OF_HEADER
@@ -118,6 +123,16 @@ def resolve_prefix(key):
             return shard_name
     return None
 
+
+def is_wave_buoy_key(key):
+    """True if key resolves to one of EXPLICIT_PREFIXES' wave buoy
+    shards. download.py uses this to pick which OUTDIR to download into;
+    retract_diff.py uses it to pick which base to look for an
+    already-downloaded file under — see WAVE_BUOY_OUTDIR/WAVE_BUOY_BASE
+    below. Computed fresh each call (not cached) so it stays correct if
+    EXPLICIT_PREFIXES is ever monkeypatched, e.g. in tests."""
+    return resolve_prefix(key) in EXPLICIT_PREFIXES.values()
+
 # Base directory tree for manifests, downloads, and logs
 MANIFEST_MAIN = "/g/data/sh74/admin/ops/"
 
@@ -132,6 +147,13 @@ TEMP_DIR = os.path.join(NCI_MANIFEST, "temp")
 # download.py's download destination / mv_to_prod's source_path — a
 # standalone path, not nested under MANIFEST_MAIN.
 OUTDIR = "/g/data/sh74/admin/incoming"
+
+# Wave buoy data (EXPLICIT_PREFIXES) downloads here instead of OUTDIR, so
+# mv_to_prod/coordinator.sh can drain it to WAVE_BUOY_BASE in its own
+# separate pass — one mv_to_prod run only ever moves one source tree to
+# one target tree, so everything landing in the same OUTDIR would all end
+# up under the same destination (AODN_BASE).
+WAVE_BUOY_OUTDIR = os.path.join(OUTDIR, "wave_buoy")
 
 LOGS_BASE = os.path.join(MANIFEST_MAIN, "logs")
 
@@ -157,6 +179,14 @@ RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
 # same value via config.sh) — and where retract_diff.py looks for
 # already-downloaded files to move when they're retracted upstream.
 AODN_BASE = "/g/data/sh74/IMOS_AODN"
+
+# Where mv_to_prod lands wave buoy data specifically (see WAVE_BUOY_OUTDIR
+# above), kept separate from AODN_BASE per an explicit request. Currently
+# an interim staging location — will move to /g/data/sh74/wave_buoy_data
+# once finalised (a one-line change here, same as AODN_BASE's own
+# staging -> final move).
+WAVE_BUOY_BASE = "/g/data/sh74/admin/staging/wave_buoy_data"
+
 OUTGOING_BASE = "/g/data/sh74/admin/outgoing"
 OUTGOING_RETENTION_DAYS = 28
 

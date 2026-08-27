@@ -110,6 +110,9 @@
 #         under IMOS/. The inventory scan now resolves each key's shard
 #         via config.resolve_prefix(), shared with compare_manifests.py,
 #         instead of only ever matching IMOS_PREFIX.
+#    1.7: Wave buoy data (EXPLICIT_PREFIXES) now lives under WAVE_BUOY_BASE
+#         instead of AODN_BASE, per an explicit request. move_retracted_file
+#         now picks the right base per key via config.is_wave_buoy_key().
 #
 # ================================================================
 # END_OF_HEADER
@@ -132,6 +135,8 @@ from config import (
     OUTGOING_BASE,
     OUTGOING_RETENTION_DAYS,
     RETRACT_SCRATCH_DIR,
+    WAVE_BUOY_BASE,
+    is_wave_buoy_key,
     resolve_prefix,
 )
 
@@ -206,12 +211,15 @@ def count_persistent_entries_by_prefix(nci_manifest):
 
 
 def move_retracted_file(key, run_datestamp, log):
-    """Move a retracted file from AODN_BASE to the outgoing quarantine,
-    preserving its key structure. Returns True if a file was actually
-    moved, False if nothing was found on disk at the expected location."""
-    src = os.path.join(AODN_BASE, key)
+    """Move a retracted file from its final destination (AODN_BASE, or
+    WAVE_BUOY_BASE for a wave buoy key — see config.is_wave_buoy_key) to
+    the outgoing quarantine, preserving its key structure. Returns True
+    if a file was actually moved, False if nothing was found on disk at
+    the expected location."""
+    base = WAVE_BUOY_BASE if is_wave_buoy_key(key) else AODN_BASE
+    src = os.path.join(base, key)
     if not os.path.exists(src):
-        log.warning(f"{key}: retracted, no local file found under {AODN_BASE} — removing from manifest only")
+        log.warning(f"{key}: retracted, no local file found under {base} — removing from manifest only")
         return False
 
     dst = os.path.join(OUTGOING_BASE, run_datestamp, key)
@@ -287,6 +295,7 @@ def main():
     highlight(log, f"Using inventory date: {date_dir_name}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
     log.info(f"AODN_BASE     = {AODN_BASE}")
+    log.info(f"WAVE_BUOY_BASE = {WAVE_BUOY_BASE}")
     highlight(log, f"OUTGOING_BASE: {OUTGOING_BASE}")
 
     live_counts = stream_inventory_keys_to_scratch(date_dir, RETRACT_SCRATCH_DIR, log)

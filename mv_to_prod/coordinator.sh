@@ -35,6 +35,15 @@
 #         target_path now sources AODN_BASE (renamed from STAGING_BASE —
 #         it's the final hosting location, not an intermediate staging
 #         step).
+#    1.4: Runs mv_to_prod.sh twice — once for the main route
+#         (OUTDIR -> AODN_BASE, as before) and once for wave buoy data
+#         (WAVE_BUOY_OUTDIR -> WAVE_BUOY_BASE), which now lands at its own
+#         separate destination per an explicit request. One mv_to_prod
+#         run only ever moves one source tree to one target tree, so this
+#         couldn't be done as a single pass — each route gets its own log
+#         file (stage names "mv_to_prod_main"/"mv_to_prod_wave_buoy") and
+#         its own post-move empty-check, sharing the same overwrite/
+#         dry_run/create_latest_link policy.
 #
 # ================================================================
 # END_OF_HEADER
@@ -61,14 +70,6 @@ RUN_ID="${PIPELINE_RUN_ID:-$(date +%Y%m%d%H%M%S)}"
 latest=$(find "${INVENTORY_DIR}" -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}Z' -printf '%f\n' | sort | tail -n 1)
 log INFO "Inventory batch: ${latest}"
 
-# Source and target paths (no trailing slash)
-source_path="${OUTDIR}"
-target_path="${AODN_BASE}"
-
-# Exact log file to write (created automatically before submission)
-log_file="$(stage_log_path mv_to_prod "${RUN_ID}")"
-log INFO "Log file: ${log_file}"
-
 # Overwrite existing files in target path?  true|false
 overwrite=true
 
@@ -81,34 +82,47 @@ create_latest_link=false
 # SUBMISSION — do not edit below this line
 # ===============================================================
 
-# Create log folder before submission so PBS can write its output there
-mkdir -p "$(dirname "$log_file")"
+# Runs one mv_to_prod.sh pass for one (source, target) route, then its
+# post-move empty-check/cleanup — same logic as before, just parameterized
+# so it can run once per route instead of being hardcoded to one pair.
+run_mv_to_prod_route() {
+    local route_name="$1"
+    local source_path="$2"
+    local target_path="$3"
 
-# Export all variables so qsub -V passes them to mv_files.sh
-export source_path target_path log_file overwrite dry_run create_latest_link
+    mkdir -p "$source_path" "$target_path"
 
-bash mv_to_prod.sh
+    local log_file
+    log_file="$(stage_log_path "$route_name" "${RUN_ID}")"
+    log INFO "[${route_name}] Log file: ${log_file}"
+    mkdir -p "$(dirname "$log_file")"
 
-# Check if source_path is empty; remove empty folders
-mv_status=$?
+    export source_path target_path log_file overwrite dry_run create_latest_link
+    bash mv_to_prod.sh
+    local mv_status=$?
 
-if [ "$mv_status" -ne 0 ]; then
-  log ERROR "[ALARM] PIPELINE_ABORT: mv_to_prod.sh failed (exit code ${mv_status}) — aborting before cleanup."
-  exit "$mv_status"
-fi
+    if [ "$mv_status" -ne 0 ]; then
+        log ERROR "[ALARM] PIPELINE_ABORT: [${route_name}] mv_to_prod.sh failed (exit code ${mv_status}) — aborting before cleanup."
+        exit "$mv_status"
+    fi
 
-# Remove all empty folders — but only if the source is genuinely empty of
-# files first. Any remaining file means something went wrong in the move
-# and deleting directories could lose data, so raise the alarm and stop
-# the pipeline instead.
-remaining_files=$(find "$source_path" \( -type f -o -type l \) | wc -l)
+    # Remove all empty folders — but only if the source is genuinely empty
+    # of files first. Any remaining file means something went wrong in the
+    # move and deleting directories could lose data, so raise the alarm
+    # and stop the pipeline instead.
+    local remaining_files
+    remaining_files=$(find "$source_path" \( -type f -o -type l \) | wc -l)
 
-if [ "$remaining_files" -eq 0 ]; then
-  log INFO "No files remaining under ${source_path} — removing empty subdirectories."
-  if [ "$dry_run" = false ]; then
-    find "$source_path" -mindepth 1 -type d -empty -delete
-  fi
-else
-  log ERROR "[ALARM] PIPELINE_ABORT: ${remaining_files} file(s) still present under ${source_path} after move — refusing to delete directories."
-  exit 1
-fi
+    if [ "$remaining_files" -eq 0 ]; then
+        log INFO "[${route_name}] No files remaining under ${source_path} — removing empty subdirectories."
+        if [ "$dry_run" = false ]; then
+            find "$source_path" -mindepth 1 -type d -empty -delete
+        fi
+    else
+        log ERROR "[ALARM] PIPELINE_ABORT: [${route_name}] ${remaining_files} file(s) still present under ${source_path} after move — refusing to delete directories."
+        exit 1
+    fi
+}
+
+run_mv_to_prod_route "mv_to_prod_main" "${OUTDIR}" "${AODN_BASE}"
+run_mv_to_prod_route "mv_to_prod_wave_buoy" "${WAVE_BUOY_OUTDIR}" "${WAVE_BUOY_BASE}"

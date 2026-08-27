@@ -10,9 +10,13 @@
 # DESCRIPTION
 #    Downloads every file listed in the per-prefix temp manifests under
 #    TEMP_DIR, recreating the S3 key structure under OUTDIR (e.g. key
-#    "IMOS/AATAMS/x.nc" lands at OUTDIR/IMOS/AATAMS/x.nc). This is stage 3
-#    of the pipeline, consuming the temp manifests written by
-#    compare_manifests.py (stage 2).
+#    "IMOS/AATAMS/x.nc" lands at OUTDIR/IMOS/AATAMS/x.nc) — or under
+#    WAVE_BUOY_OUTDIR instead, for a key that resolves to one of
+#    EXPLICIT_PREFIXES' wave buoy shards (config.is_wave_buoy_key), since
+#    that data gets moved to its own separate destination (see
+#    mv_to_prod/coordinator.sh). This is stage 3 of the pipeline,
+#    consuming the temp manifests written by compare_manifests.py
+#    (stage 2).
 #
 #    Deliberately simple and sequential — no parallelism. The point of this
 #    run is just to see how it performs and whether parallelism actually
@@ -62,6 +66,9 @@
 #         output directory, hourly progress, merge failures, final
 #         summary) surfaced to the top-level pipeline log; everything
 #         else stays file-only.
+#    1.3: Wave buoy data (EXPLICIT_PREFIXES) now downloads into
+#         WAVE_BUOY_OUTDIR instead of OUTDIR, per an explicit request to
+#         land it at its own separate destination.
 #
 # ================================================================
 # END_OF_HEADER
@@ -81,7 +88,7 @@ except ImportError:
     have_crt_checksums = False
 
 from common import dedupe_manifest, get_s3_client, highlight, peak_memory_gb, setup_logging
-from config import NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR
+from config import NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR, WAVE_BUOY_OUTDIR, is_wave_buoy_key
 
 chunk_size = 8 * 1024 * 1024  # 8 MB
 progress_interval = 3600  # seconds — how often to log a running speed estimate
@@ -107,7 +114,8 @@ def iter_temp_manifest_keys(temp_dir):
 
 
 def download_one(s3, key, log):
-    local_path = os.path.join(OUTDIR, key)
+    outdir = WAVE_BUOY_OUTDIR if is_wave_buoy_key(key) else OUTDIR
+    local_path = os.path.join(outdir, key)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
     try:
@@ -194,8 +202,10 @@ def main():
     highlight(log, f"Log file: {log_path}")
     log.info(f"TEMP_DIR = {TEMP_DIR}")
     highlight(log, f"OUTDIR: {OUTDIR}")
+    highlight(log, f"WAVE_BUOY_OUTDIR: {WAVE_BUOY_OUTDIR}")
 
     os.makedirs(OUTDIR, exist_ok=True)
+    os.makedirs(WAVE_BUOY_OUTDIR, exist_ok=True)
 
     s3 = get_s3_client()
 
