@@ -34,6 +34,14 @@
 #         lines (paths, structural events, one-line summaries) that
 #         should surface at the pipeline level. Formatter now includes
 #         the log level, so every log line is greppable by severity.
+#    1.3: dedupe_manifest now has a disk-based path (GNU sort -u) for
+#         manifests above LARGE_PREFIX_ROW_THRESHOLD rows, same pattern
+#         compare_manifests.py already uses for its diff. Fixes a real
+#         OOM: download.py calls dedupe_manifest after every merge,
+#         unconditionally, including on AUV.csv (~82M rows) — fully
+#         materializing that file (list of rows + a seen set + a deduped
+#         list) needed far more than the datamover VM's 32GB. The
+#         in-memory path is unchanged for every manifest below threshold.
 #
 # ================================================================
 # END_OF_HEADER
@@ -45,6 +53,8 @@ import logging
 import os
 import re
 import resource
+import shutil
+import subprocess
 import sys
 import time
 
@@ -52,7 +62,7 @@ import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
 
-from config import stage_log_path
+from config import DEDUPE_SCRATCH_DIR, LARGE_PREFIX_ROW_THRESHOLD, stage_log_path
 
 DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}Z$")
 
@@ -183,12 +193,27 @@ def count_csv_rows(path):
 
 
 def dedupe_manifest(persistent_csv, log):
-    """Remove duplicate filepath rows from a persistent manifest CSV,
-    keeping the first occurrence of each filepath. Rewrites the file only
-    if duplicates were found, atomically (write to a temp file, then
-    os.replace() over the original) so an interruption partway through
-    can't leave a corrupted manifest. Returns the number of rows
-    removed."""
+    """Remove duplicate filepath rows from a persistent manifest CSV.
+    Rewrites the file only if duplicates were found, atomically (write to
+    a temp file, then os.replace() over the original) so an interruption
+    partway through can't leave a corrupted manifest. Returns the number
+    of rows removed.
+
+    Manifests above LARGE_PREFIX_ROW_THRESHOLD rows (config.py) use an
+    external sort -u instead of materializing every row in memory — the
+    same disk-based approach compare_manifests.py already uses for its
+    diff, and for the same reason: this pipeline tracks at least one
+    prefix (AUV) with ~82M rows, and reading that fully into Python
+    objects (a rows list, a seen set, a deduped list) needs far more than
+    the datamover VM's 32GB. That path keeps the first occurrence of each
+    filepath in the sorted (not original file) order; the small path
+    below keeps the first occurrence in original file order. Nothing
+    downstream depends on manifest row order or which duplicate survives,
+    so this difference doesn't matter in practice."""
+    row_count = count_csv_rows(persistent_csv)
+    if row_count > LARGE_PREFIX_ROW_THRESHOLD:
+        return _dedupe_manifest_large(persistent_csv, row_count, log)
+
     header, rows = read_csv_rows(persistent_csv)
 
     seen = set()
@@ -211,4 +236,49 @@ def dedupe_manifest(persistent_csv, log):
         os.replace(tmp_csv, persistent_csv)
         log.info(f"{os.path.basename(persistent_csv)}: removed {removed} duplicate entrie(s)")
 
+    return removed
+
+
+def _dedupe_manifest_large(persistent_csv, row_count, log):
+    """dedupe_manifest()'s disk-based path (see its docstring). Extracts
+    the data rows as plain "filepath,checksum" lines (same convention
+    compare_manifests.py's large-prefix scratch files already use —
+    assumes no embedded commas, true of every filepath/checksum this
+    pipeline has ever seen), sorts+dedups them with GNU sort -u -k1,1
+    (never holding the file's contents in memory), then reassembles
+    header + deduped rows atomically."""
+    os.makedirs(DEDUPE_SCRATCH_DIR, exist_ok=True)
+    base = os.path.basename(persistent_csv)
+    data_only = os.path.join(DEDUPE_SCRATCH_DIR, f"{base}.data")
+    deduped_path = os.path.join(DEDUPE_SCRATCH_DIR, f"{base}.deduped")
+
+    with open(persistent_csv, newline="") as f_in:
+        reader = csv.reader(f_in)
+        header = next(reader, None)
+        with open(data_only, "w") as f_out:
+            for row in reader:
+                f_out.write(",".join(row) + "\n")
+
+    subprocess.run(
+        ["sort", "-t", ",", "-k1,1", "-u", "-T", DEDUPE_SCRATCH_DIR, "-o", deduped_path, data_only],
+        check=True,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    os.remove(data_only)
+
+    with open(deduped_path) as f:
+        deduped_count = sum(1 for _ in f)
+    removed = row_count - deduped_count
+
+    if removed:
+        tmp_csv = persistent_csv + ".tmp"
+        with open(tmp_csv, "w") as f_out:
+            if header is not None:
+                f_out.write(",".join(header) + "\n")
+            with open(deduped_path) as f_in:
+                shutil.copyfileobj(f_in, f_out)
+        os.replace(tmp_csv, persistent_csv)
+        log.info(f"{base}: removed {removed} duplicate entrie(s) via disk-based dedup")
+
+    os.remove(deduped_path)
     return removed

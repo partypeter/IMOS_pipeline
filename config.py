@@ -44,6 +44,10 @@
 #         the single place both IMOS/ and EXPLICIT_PREFIXES matching
 #         happens, shared by compare_manifests.py and retract_diff.py so
 #         the two can't drift apart on how a key maps to a shard.
+#    1.4: Added DEDUPE_SCRATCH_DIR for common.py::dedupe_manifest()'s
+#         disk-based path on manifests above LARGE_PREFIX_ROW_THRESHOLD —
+#         fixes an OOM (download.py's post-merge dedup fully materializing
+#         AUV.csv, ~82M rows, in memory).
 #
 # ================================================================
 # END_OF_HEADER
@@ -176,3 +180,9 @@ LARGE_PREFIX_ROW_THRESHOLD = 5_000_000
 # would defeat the purpose (confirmed empirically: GNU sort ran out of
 # space under /tmp on the datamover VM but succeeded once pointed here).
 COMPARE_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_compare_manifests")
+
+# common.py's dedupe_manifest() scratch space for its disk-based path,
+# used on persistent manifests above LARGE_PREFIX_ROW_THRESHOLD (e.g.
+# AUV) — same reasoning as COMPARE_SCRATCH_DIR, must be on real disk, not
+# /tmp.
+DEDUPE_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_dedupe_manifest")
