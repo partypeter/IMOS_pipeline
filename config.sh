@@ -42,6 +42,11 @@
 #    1.3: Added WAVE_BUOY_OUTDIR/WAVE_BUOY_BASE — wave buoy data now
 #         lands in its own destination, drained by its own mv_to_prod
 #         pass (see coordinator.sh), separate from AODN_BASE.
+#    1.4: WAVE_BUOY_OUTDIR moved to a sibling of OUTDIR instead of nested
+#         inside it — OUTDIR is the main mv_to_prod route's source_path,
+#         so nesting meant that route's Pass 1 saw WAVE_BUOY_OUTDIR as
+#         just another folder under OUTDIR and swept it into AODN_BASE
+#         wholesale (confirmed on a real run).
 #
 # ================================================================
 # END_OF_HEADER
@@ -62,9 +67,10 @@ OUTDIR="/g/data/sh74/admin/incoming"
 
 # Wave buoy data's own destination, kept separate from AODN_BASE/OUTDIR
 # per an explicit request (see coordinator.sh's second mv_to_prod route).
-# WAVE_BUOY_BASE is currently an interim staging location — will move to
-# /g/data/sh74/wave_buoy_data once finalised.
-WAVE_BUOY_OUTDIR="${OUTDIR}/wave_buoy"
+# WAVE_BUOY_OUTDIR must be a sibling of OUTDIR, not nested inside it (see
+# VERSION 1.4 above). WAVE_BUOY_BASE is currently an interim staging
+# location — will move to /g/data/sh74/wave_buoy_data once finalised.
+WAVE_BUOY_OUTDIR="/g/data/sh74/admin/incoming_wave_buoy"
 WAVE_BUOY_BASE="/g/data/sh74/admin/staging/wave_buoy_data"
 
 # Canonical per-run log file path for one pipeline stage — mirrors

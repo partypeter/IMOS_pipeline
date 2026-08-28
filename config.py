@@ -152,8 +152,12 @@ OUTDIR = "/g/data/sh74/admin/incoming"
 # mv_to_prod/coordinator.sh can drain it to WAVE_BUOY_BASE in its own
 # separate pass — one mv_to_prod run only ever moves one source tree to
 # one target tree, so everything landing in the same OUTDIR would all end
-# up under the same destination (AODN_BASE).
-WAVE_BUOY_OUTDIR = os.path.join(OUTDIR, "wave_buoy")
+# up under the same destination (AODN_BASE). Must be a sibling of OUTDIR,
+# NOT nested inside it — OUTDIR is itself the main route's source_path,
+# so mv_to_prod's Pass 1 would otherwise see this as just another
+# top-level folder under OUTDIR and sweep it into AODN_BASE wholesale
+# (confirmed: this happened on a real run before this was fixed).
+WAVE_BUOY_OUTDIR = "/g/data/sh74/admin/incoming_wave_buoy"
 
 LOGS_BASE = os.path.join(MANIFEST_MAIN, "logs")
 

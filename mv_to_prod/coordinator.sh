@@ -44,6 +44,15 @@
 #         file (stage names "mv_to_prod_main"/"mv_to_prod_wave_buoy") and
 #         its own post-move empty-check, sharing the same overwrite/
 #         dry_run/create_latest_link policy.
+#    1.5: Dropped the speculative mkdir -p of source_path/target_path
+#         before each route — it was creating an empty destination folder
+#         (e.g. AODN_BASE/wave_buoy) even when there was nothing to move
+#         there. source_path is already guaranteed to exist (download.py
+#         creates OUTDIR/WAVE_BUOY_OUTDIR unconditionally); target_path is
+#         expected to already exist (a one-time manual mkdir for
+#         WAVE_BUOY_BASE's first-ever run) — mv_to_prod.sh fails loudly
+#         via the existing PIPELINE_ABORT path if it doesn't, rather than
+#         silently pre-creating it.
 #
 # ================================================================
 # END_OF_HEADER
@@ -89,8 +98,6 @@ run_mv_to_prod_route() {
     local route_name="$1"
     local source_path="$2"
     local target_path="$3"
-
-    mkdir -p "$source_path" "$target_path"
 
     local log_file
     log_file="$(stage_log_path "$route_name" "${RUN_ID}")"
