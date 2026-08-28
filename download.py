@@ -82,13 +82,6 @@
 #         already hardened against; download.py's own read of these files
 #         had no equivalent protection until now. Fixes a real production
 #         crash.
-#    1.6: iter_temp_manifest_keys() now also survives a temp manifest that
-#         still fails after retry() gives up — a real production case hit
-#         a temp file with a genuinely corrupted (not transient) NUL byte,
-#         likely leftover from a process killed mid-write. That one file
-#         is now skipped (logged loudly, left in place) instead of
-#         crashing the whole download stage over one bad file — matching
-#         merge_temp_into_persistent()'s existing per-file isolation.
 #
 # ================================================================
 # END_OF_HEADER
@@ -151,30 +144,12 @@ def _read_temp_manifest_filepaths(path):
     return retry(_read)
 
 
-def iter_temp_manifest_keys(temp_dirs, log):
-    """Yield every filepath queued across temp_dirs. A temp manifest that
-    still fails after retry() has exhausted its attempts is not a
-    transient hiccup — it's a genuinely corrupted file (e.g. left over
-    from a process that was killed mid-write) — so that one file is
-    skipped (logged loudly, left in place for manual inspection) rather
-    than aborting the whole download stage and blocking every other
-    prefix's downloads over one bad file."""
+def iter_temp_manifest_keys(temp_dirs):
     for temp_dir in temp_dirs:
         for csv_name in sorted(os.listdir(temp_dir)):
             if not csv_name.endswith(".csv"):
                 continue
-            path = os.path.join(temp_dir, csv_name)
-            try:
-                filepaths = _read_temp_manifest_filepaths(path)
-            except Exception as e:
-                highlight(
-                    log,
-                    f"{csv_name}: FAILED to read temp manifest after retries ({e}) — skipping this "
-                    f"file's queued downloads this run; left in place at {path} for manual inspection",
-                    level="error",
-                )
-                continue
-            yield from filepaths
+            yield from _read_temp_manifest_filepaths(os.path.join(temp_dir, csv_name))
 
 
 def download_one(s3, key, log):
@@ -279,7 +254,7 @@ def main():
     total_failed = 0
     total_bytes = 0
     last_report = overall_start
-    for key in iter_temp_manifest_keys([TEMP_DIR, WAVE_BUOY_TEMP_DIR], log):
+    for key in iter_temp_manifest_keys([TEMP_DIR, WAVE_BUOY_TEMP_DIR]):
         result = download_one(s3, key, log)
         if result is None:
             total_failed += 1
