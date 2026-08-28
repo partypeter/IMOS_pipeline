@@ -9,10 +9,11 @@
 #
 # DESCRIPTION
 #    Reverse of compare_manifests.py's "shard diff": finds files that are
-#    recorded in a persistent manifest (nci_imos_manifest/<prefix>.csv) but
-#    are no longer present in the latest inventory — i.e. retracted
-#    upstream since they were downloaded. This is stage 5 of the pipeline,
-#    run after mv_to_prod has moved newly-downloaded files into staging.
+#    recorded in a persistent manifest (<prefix>.csv, under NCI_MANIFEST or
+#    WAVE_BUOY_MANIFEST — see config.manifest_dir_for_prefix()) but are no
+#    longer present in the latest inventory — i.e. retracted upstream since
+#    they were downloaded. This is stage 5 of the pipeline, run after
+#    mv_to_prod has moved newly-downloaded files into staging.
 #
 #    Prefixes are resolved the same way as compare_manifests.py, via
 #    config.resolve_prefix() — both IMOS/-rooted and config.py's
@@ -113,6 +114,11 @@
 #    1.7: Wave buoy data (EXPLICIT_PREFIXES) now lives under WAVE_BUOY_BASE
 #         instead of AODN_BASE, per an explicit request. move_retracted_file
 #         now picks the right base per key via config.is_wave_buoy_key().
+#    1.8: Wave buoy persistent manifests now live under WAVE_BUOY_MANIFEST
+#         instead of NCI_MANIFEST — count_persistent_entries_by_prefix scans
+#         both directories, and process_manifest resolves each prefix's
+#         manifest directory via config.manifest_dir_for_prefix() instead of
+#         always using NCI_MANIFEST.
 #
 # ================================================================
 # END_OF_HEADER
@@ -136,9 +142,16 @@ from config import (
     OUTGOING_RETENTION_DAYS,
     RETRACT_SCRATCH_DIR,
     WAVE_BUOY_BASE,
+    WAVE_BUOY_MANIFEST,
     is_wave_buoy_key,
+    manifest_dir_for_prefix,
     resolve_prefix,
 )
+
+# Persistent manifests live in one of two directories depending on group —
+# see config.manifest_dir_for_prefix(). Both are scanned when counting
+# entries by prefix.
+MANIFEST_DIRS = (NCI_MANIFEST, WAVE_BUOY_MANIFEST)
 
 
 def stream_inventory_keys_to_scratch(date_dir, scratch_dir, log):
@@ -190,11 +203,14 @@ def load_live_keys_for_prefix(scratch_dir, prefix):
         return {line.rstrip("\n") for line in f}
 
 
-def count_persistent_entries_by_prefix(nci_manifest):
+def count_persistent_entries_by_prefix(manifest_dirs):
     """Number of data rows (excluding header) in each persistent manifest
-    under nci_manifest, keyed by prefix. Retries a transient per-file read
-    failure (see common.retry) instead of aborting the whole run — counts
-    stream row-by-row rather than materializing the file, same as before."""
+    across manifest_dirs, keyed by prefix. Prefix names are unique across
+    the two manifest groups by construction, so the per-directory results
+    merge into one dict with no collisions. Retries a transient per-file
+    read failure (see common.retry) instead of aborting the whole run —
+    counts stream row-by-row rather than materializing the file, same as
+    before."""
     def _count_one(path):
         with open(path, newline="") as f:
             reader = csv.reader(f)
@@ -202,11 +218,12 @@ def count_persistent_entries_by_prefix(nci_manifest):
             return sum(1 for _ in reader)
 
     counts = {}
-    for csv_name in sorted(os.listdir(nci_manifest)):
-        if not csv_name.endswith(".csv"):
-            continue
-        prefix = csv_name[:-len(".csv")]
-        counts[prefix] = retry(_count_one, os.path.join(nci_manifest, csv_name))
+    for manifest_dir in manifest_dirs:
+        for csv_name in sorted(os.listdir(manifest_dir)):
+            if not csv_name.endswith(".csv"):
+                continue
+            prefix = csv_name[:-len(".csv")]
+            counts[prefix] = retry(_count_one, os.path.join(manifest_dir, csv_name))
     return counts
 
 
@@ -235,7 +252,7 @@ def process_manifest(prefix, live_keys, run_datestamp, log):
     row-by-row (read, decide, write survivor immediately) rather than
     materializing the original and surviving rows fully in memory at the
     same time. Returns the number of entries retracted."""
-    persistent_csv = os.path.join(NCI_MANIFEST, f"{prefix}.csv")
+    persistent_csv = os.path.join(manifest_dir_for_prefix(prefix), f"{prefix}.csv")
     tmp_csv = persistent_csv + ".tmp"
 
     retracted = 0
@@ -294,12 +311,13 @@ def main():
     highlight(log, f"Log file: {log_path}")
     highlight(log, f"Using inventory date: {date_dir_name}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
+    log.info(f"WAVE_BUOY_MANIFEST = {WAVE_BUOY_MANIFEST}")
     log.info(f"AODN_BASE     = {AODN_BASE}")
     log.info(f"WAVE_BUOY_BASE = {WAVE_BUOY_BASE}")
     highlight(log, f"OUTGOING_BASE: {OUTGOING_BASE}")
 
     live_counts = stream_inventory_keys_to_scratch(date_dir, RETRACT_SCRATCH_DIR, log)
-    persistent_counts = count_persistent_entries_by_prefix(NCI_MANIFEST)
+    persistent_counts = count_persistent_entries_by_prefix(MANIFEST_DIRS)
 
     # EXCLUDED_PREFIXES are deliberately purged regardless of the real
     # upstream state (see SAFETY GUARDS above) — exclude them from both

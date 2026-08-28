@@ -41,9 +41,17 @@
 #    prefix from before it was excluded is cleaned up by retract_diff.py,
 #    not here.
 #
-#    Persistent manifests live at nci_imos_manifest/<prefix>.csv
-#    Temp manifests live at       nci_imos_manifest/temp/<prefix>.csv
-#    Both use header: filepath,checksum
+#    Persistent manifests live at nci_imos_manifest/<prefix>.csv, or
+#    wave_buoy_manifest/<prefix>.csv for an EXPLICIT_PREFIXES shard (see
+#    config.manifest_dir_for_prefix()) — two separate directories, per an
+#    explicit request; nothing under nci_imos_manifest/ moved or changed
+#    when wave_buoy_manifest/ was introduced. Temp manifests live under
+#    the matching directory's own temp/ subfolder (config.temp_dir_for_
+#    prefix()). Both use header: filepath,checksum
+#
+#    The two directories' pending-batch checks are independent: a stuck
+#    wave buoy batch only skips wave buoy prefixes this run, and vice
+#    versa — one group being blocked doesn't stop the other's progress.
 #
 #    Most prefixes' persistent manifests are small enough to diff entirely
 #    in memory (see load_existing_filepaths). A prefix whose manifest
@@ -81,6 +89,11 @@
 #         via config.resolve_prefix() instead of only ever matching
 #         IMOS_PREFIX; the tracked prefix list is now IMOS/'s
 #         auto-discovered prefixes plus EXPLICIT_PREFIXES' shard names.
+#    1.6: Wave buoy manifests now live under their own WAVE_BUOY_MANIFEST
+#         directory instead of NCI_MANIFEST, per an explicit request. The
+#         pending-batch check is now independent per directory — a stuck
+#         wave buoy batch no longer blocks IMOS prefixes from processing
+#         this run, and vice versa.
 #
 # ================================================================
 # END_OF_HEADER
@@ -102,7 +115,12 @@ from config import (
     NCI_MANIFEST,
     SOURCE_BUCKET,
     TEMP_DIR,
+    WAVE_BUOY_MANIFEST,
+    WAVE_BUOY_TEMP_DIR,
+    is_wave_buoy_prefix,
+    manifest_dir_for_prefix,
     resolve_prefix,
+    temp_dir_for_prefix,
 )
 
 
@@ -218,13 +236,25 @@ def main():
     highlight(log, f"Excluded prefix(es) (never tracked): {', '.join(sorted(EXCLUDED_PREFIXES)) or 'none'}")
     log.info(f"NCI_MANIFEST  = {NCI_MANIFEST}")
     log.info(f"TEMP_DIR      = {TEMP_DIR}")
+    log.info(f"WAVE_BUOY_MANIFEST = {WAVE_BUOY_MANIFEST}")
+    log.info(f"WAVE_BUOY_TEMP_DIR = {WAVE_BUOY_TEMP_DIR}")
 
     os.makedirs(NCI_MANIFEST, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(WAVE_BUOY_MANIFEST, exist_ok=True)
+    os.makedirs(WAVE_BUOY_TEMP_DIR, exist_ok=True)
     os.makedirs(COMPARE_SCRATCH_DIR, exist_ok=True)
 
-    if os.listdir(TEMP_DIR):
-        log.info(f"{TEMP_DIR} is not empty — a previous batch is still pending confirmation. Aborting.")
+    # Independent per-directory pending-batch check: a stuck batch in one
+    # group only skips that group's prefixes below, not the other's.
+    imos_temp_pending = bool(os.listdir(TEMP_DIR))
+    wave_buoy_temp_pending = bool(os.listdir(WAVE_BUOY_TEMP_DIR))
+    if imos_temp_pending:
+        highlight(log, f"{TEMP_DIR} is not empty — a previous IMOS batch is still pending confirmation. IMOS prefixes are skipped this run.")
+    if wave_buoy_temp_pending:
+        highlight(log, f"{WAVE_BUOY_TEMP_DIR} is not empty — a previous wave buoy batch is still pending confirmation. Wave buoy prefixes are skipped this run.")
+    if imos_temp_pending and wave_buoy_temp_pending:
+        highlight(log, "Both groups have a pending batch — nothing to do this run.")
         return
 
     s3 = get_s3_client()
@@ -241,12 +271,11 @@ def main():
     large_prefixes = {}  # prefix -> sorted persistent filepaths (scratch path)
     valid_prefixes = set()
     for prefix in prefixes:
-        temp_csv = os.path.join(TEMP_DIR, f"{prefix}.csv")
-        if os.path.exists(temp_csv):
-            log.info(f"{prefix}: pending temp manifest already exists — skipping until confirmed/merged")
-            continue
+        is_wb = is_wave_buoy_prefix(prefix)
+        if (is_wb and wave_buoy_temp_pending) or (not is_wb and imos_temp_pending):
+            continue  # this group's batch is still pending — see the check above
 
-        shard_csv = os.path.join(NCI_MANIFEST, f"{prefix}.csv")
+        shard_csv = os.path.join(manifest_dir_for_prefix(prefix), f"{prefix}.csv")
         if not os.path.exists(shard_csv):
             with open(shard_csv, "w", newline="") as f:
                 csv.writer(f).writerow(["filepath", "checksum"])
@@ -307,7 +336,7 @@ def main():
                         continue
 
                     if prefix not in temp_writers:
-                        temp_csv = os.path.join(TEMP_DIR, f"{prefix}.csv")
+                        temp_csv = os.path.join(temp_dir_for_prefix(prefix), f"{prefix}.csv")
                         fh = open(temp_csv, "w", newline="")
                         writer = csv.writer(fh)
                         writer.writerow(["filepath", "checksum"])
@@ -330,7 +359,7 @@ def main():
             os.remove(sorted_persistent_path)
             continue
         raw_path = os.path.join(COMPARE_SCRATCH_DIR, f"{prefix}_inventory_raw.csv")
-        temp_csv = os.path.join(TEMP_DIR, f"{prefix}.csv")
+        temp_csv = os.path.join(temp_dir_for_prefix(prefix), f"{prefix}.csv")
         new_counts[prefix] = reconcile_large_prefix(
             prefix, raw_path, sorted_persistent_path, COMPARE_SCRATCH_DIR, temp_csv, log
         )

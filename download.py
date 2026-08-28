@@ -9,14 +9,15 @@
 #
 # DESCRIPTION
 #    Downloads every file listed in the per-prefix temp manifests under
-#    TEMP_DIR, recreating the S3 key structure under OUTDIR (e.g. key
-#    "IMOS/AATAMS/x.nc" lands at OUTDIR/IMOS/AATAMS/x.nc) — or under
-#    WAVE_BUOY_OUTDIR instead, for a key that resolves to one of
-#    EXPLICIT_PREFIXES' wave buoy shards (config.is_wave_buoy_key), since
-#    that data gets moved to its own separate destination (see
-#    mv_to_prod/coordinator.sh). This is stage 3 of the pipeline,
-#    consuming the temp manifests written by compare_manifests.py
-#    (stage 2).
+#    TEMP_DIR and WAVE_BUOY_TEMP_DIR (MANIFEST_GROUPS — one pair per
+#    manifest group, see config.manifest_dir_for_prefix()), recreating
+#    the S3 key structure under OUTDIR (e.g. key "IMOS/AATAMS/x.nc" lands
+#    at OUTDIR/IMOS/AATAMS/x.nc) — or under WAVE_BUOY_OUTDIR instead, for
+#    a key that resolves to one of EXPLICIT_PREFIXES' wave buoy shards
+#    (config.is_wave_buoy_key), since that data gets moved to its own
+#    separate destination (see mv_to_prod/coordinator.sh). This is
+#    stage 3 of the pipeline, consuming the temp manifests written by
+#    compare_manifests.py (stage 2).
 #
 #    Deliberately simple and sequential — no parallelism. The point of this
 #    run is just to see how it performs and whether parallelism actually
@@ -69,6 +70,11 @@
 #    1.3: Wave buoy data (EXPLICIT_PREFIXES) now downloads into
 #         WAVE_BUOY_OUTDIR instead of OUTDIR, per an explicit request to
 #         land it at its own separate destination.
+#    1.4: Wave buoy temp manifests now live under WAVE_BUOY_TEMP_DIR
+#         instead of TEMP_DIR, merging into WAVE_BUOY_MANIFEST instead of
+#         NCI_MANIFEST — iter_temp_manifest_keys() and
+#         merge_temp_into_persistent() both now iterate both
+#         (temp_dir, manifest_dir) pairs instead of just one.
 #
 # ================================================================
 # END_OF_HEADER
@@ -88,7 +94,20 @@ except ImportError:
     have_crt_checksums = False
 
 from common import dedupe_manifest, get_s3_client, highlight, peak_memory_gb, setup_logging
-from config import NCI_MANIFEST, OUTDIR, SOURCE_BUCKET, TEMP_DIR, WAVE_BUOY_OUTDIR, is_wave_buoy_key
+from config import (
+    NCI_MANIFEST,
+    OUTDIR,
+    SOURCE_BUCKET,
+    TEMP_DIR,
+    WAVE_BUOY_MANIFEST,
+    WAVE_BUOY_OUTDIR,
+    WAVE_BUOY_TEMP_DIR,
+    is_wave_buoy_key,
+)
+
+# (temp_dir, manifest_dir) pairs — one per manifest group. See
+# config.manifest_dir_for_prefix()/temp_dir_for_prefix().
+MANIFEST_GROUPS = ((TEMP_DIR, NCI_MANIFEST), (WAVE_BUOY_TEMP_DIR, WAVE_BUOY_MANIFEST))
 
 chunk_size = 8 * 1024 * 1024  # 8 MB
 progress_interval = 3600  # seconds — how often to log a running speed estimate
@@ -103,14 +122,15 @@ if have_crt_checksums:
 checksum_candidates.append(("ChecksumCRC32", Crc32Checksum))
 
 
-def iter_temp_manifest_keys(temp_dir):
-    for csv_name in sorted(os.listdir(temp_dir)):
-        if not csv_name.endswith(".csv"):
-            continue
-        with open(os.path.join(temp_dir, csv_name), newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                yield row["filepath"]
+def iter_temp_manifest_keys(temp_dirs):
+    for temp_dir in temp_dirs:
+        for csv_name in sorted(os.listdir(temp_dir)):
+            if not csv_name.endswith(".csv"):
+                continue
+            with open(os.path.join(temp_dir, csv_name), newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    yield row["filepath"]
 
 
 def download_one(s3, key, log):
@@ -165,35 +185,36 @@ def download_one(s3, key, log):
 
 
 def merge_temp_into_persistent(log):
-    for csv_name in sorted(os.listdir(TEMP_DIR)):
-        if not csv_name.endswith(".csv"):
-            continue
-        temp_csv = os.path.join(TEMP_DIR, csv_name)
-        persistent_csv = os.path.join(NCI_MANIFEST, csv_name)
+    for temp_dir, manifest_dir in MANIFEST_GROUPS:
+        for csv_name in sorted(os.listdir(temp_dir)):
+            if not csv_name.endswith(".csv"):
+                continue
+            temp_csv = os.path.join(temp_dir, csv_name)
+            persistent_csv = os.path.join(manifest_dir, csv_name)
 
-        try:
-            with open(temp_csv, newline="") as f:
-                rows = list(csv.DictReader(f))
+            try:
+                with open(temp_csv, newline="") as f:
+                    rows = list(csv.DictReader(f))
 
-            if not os.path.exists(persistent_csv):
-                with open(persistent_csv, "w", newline="") as f:
-                    csv.writer(f).writerow(["filepath", "checksum"])
+                if not os.path.exists(persistent_csv):
+                    with open(persistent_csv, "w", newline="") as f:
+                        csv.writer(f).writerow(["filepath", "checksum"])
 
-            with open(persistent_csv, "a", newline="") as f:
-                writer = csv.writer(f)
-                for row in rows:
-                    writer.writerow([row["filepath"], row["checksum"]])
+                with open(persistent_csv, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    for row in rows:
+                        writer.writerow([row["filepath"], row["checksum"]])
 
-            os.remove(temp_csv)
-            log.info(f"{csv_name}: merged {len(rows)} entrie(s) into persistent manifest, temp file removed")
+                os.remove(temp_csv)
+                log.info(f"{csv_name}: merged {len(rows)} entrie(s) into persistent manifest, temp file removed")
 
-            dedupe_manifest(persistent_csv, log)
-        except Exception as e:
-            highlight(
-                log,
-                f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place",
-                level="error",
-            )
+                dedupe_manifest(persistent_csv, log)
+            except Exception as e:
+                highlight(
+                    log,
+                    f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place",
+                    level="error",
+                )
 
 
 def main():
@@ -201,6 +222,7 @@ def main():
     log, run_id, log_path = setup_logging("download")
     highlight(log, f"Log file: {log_path}")
     log.info(f"TEMP_DIR = {TEMP_DIR}")
+    log.info(f"WAVE_BUOY_TEMP_DIR = {WAVE_BUOY_TEMP_DIR}")
     highlight(log, f"OUTDIR: {OUTDIR}")
     highlight(log, f"WAVE_BUOY_OUTDIR: {WAVE_BUOY_OUTDIR}")
 
@@ -213,7 +235,7 @@ def main():
     total_failed = 0
     total_bytes = 0
     last_report = overall_start
-    for key in iter_temp_manifest_keys(TEMP_DIR):
+    for key in iter_temp_manifest_keys([TEMP_DIR, WAVE_BUOY_TEMP_DIR]):
         result = download_one(s3, key, log)
         if result is None:
             total_failed += 1

@@ -53,6 +53,16 @@
 #         destination, separate from AODN_BASE, per an explicit request.
 #         download.py and retract_diff.py both route on is_wave_buoy_key()
 #         so the two agree on where a given key's file actually lives.
+#    1.6: WAVE_BUOY_OUTDIR moved to a sibling of OUTDIR instead of nested
+#         inside it — fixes a real bug where OUTDIR's own mv_to_prod
+#         route swept WAVE_BUOY_OUTDIR into AODN_BASE wholesale.
+#    1.7: Added WAVE_BUOY_MANIFEST — wave buoy manifests now live in
+#         their own directory, separate from NCI_MANIFEST (which stays
+#         IMOS-only, no migration needed for existing data), per an
+#         explicit request. manifest_dir_for_prefix()/temp_dir_for_prefix()
+#         are the single place compare_manifests.py/download.py/
+#         retract_diff.py all decide which directory a given prefix's
+#         files live under.
 #
 # ================================================================
 # END_OF_HEADER
@@ -133,6 +143,29 @@ def is_wave_buoy_key(key):
     EXPLICIT_PREFIXES is ever monkeypatched, e.g. in tests."""
     return resolve_prefix(key) in EXPLICIT_PREFIXES.values()
 
+
+def is_wave_buoy_prefix(prefix):
+    """True if prefix (a manifest shard name, e.g. 'CSIRO' or 'AATAMS' —
+    not a full S3 key) is one of EXPLICIT_PREFIXES' wave buoy shards.
+    Used by manifest_dir_for_prefix()/temp_dir_for_prefix() below to
+    route a shard to the right manifest directory."""
+    return prefix in EXPLICIT_PREFIXES.values()
+
+
+def manifest_dir_for_prefix(prefix):
+    """Which persistent-manifest directory a shard's CSV lives under:
+    WAVE_BUOY_MANIFEST for a wave buoy shard, NCI_MANIFEST (unchanged,
+    IMOS-only) for everything else. The single place
+    compare_manifests.py/download.py/retract_diff.py all decide this, so
+    they can't drift apart on where a given prefix's manifest lives."""
+    return WAVE_BUOY_MANIFEST if is_wave_buoy_prefix(prefix) else NCI_MANIFEST
+
+
+def temp_dir_for_prefix(prefix):
+    """Which temp-manifest (pending-batch) directory a shard's CSV lives
+    under — mirrors manifest_dir_for_prefix()."""
+    return WAVE_BUOY_TEMP_DIR if is_wave_buoy_prefix(prefix) else TEMP_DIR
+
 # Base directory tree for manifests, downloads, and logs
 MANIFEST_MAIN = "/g/data/sh74/admin/ops/"
 
@@ -143,6 +176,13 @@ INVENTORY_DIR = os.path.join(MANIFEST_MAIN, "IMOS_inventory")
 
 NCI_MANIFEST = os.path.join(MANIFEST_MAIN, "nci_imos_manifest")
 TEMP_DIR = os.path.join(NCI_MANIFEST, "temp")
+
+# Wave buoy manifests live in their own directory, separate from
+# NCI_MANIFEST (which stays IMOS-only — no migration needed for the
+# manifests already there), per an explicit request. See
+# manifest_dir_for_prefix()/temp_dir_for_prefix() above.
+WAVE_BUOY_MANIFEST = os.path.join(MANIFEST_MAIN, "wave_buoy_manifest")
+WAVE_BUOY_TEMP_DIR = os.path.join(WAVE_BUOY_MANIFEST, "temp")
 
 # download.py's download destination / mv_to_prod's source_path — a
 # standalone path, not nested under MANIFEST_MAIN.
