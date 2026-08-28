@@ -75,6 +75,13 @@
 #         NCI_MANIFEST — iter_temp_manifest_keys() and
 #         merge_temp_into_persistent() both now iterate both
 #         (temp_dir, manifest_dir) pairs instead of just one.
+#    1.5: iter_temp_manifest_keys() now retries a temp manifest's read
+#         (see common.retry) instead of aborting the whole run — same
+#         "_csv.Error: line contains NUL" spurious-read failure over
+#         /g/data that compare_manifests.py's load_existing_filepaths was
+#         already hardened against; download.py's own read of these files
+#         had no equivalent protection until now. Fixes a real production
+#         crash.
 #
 # ================================================================
 # END_OF_HEADER
@@ -93,7 +100,7 @@ try:
 except ImportError:
     have_crt_checksums = False
 
-from common import dedupe_manifest, get_s3_client, highlight, peak_memory_gb, setup_logging
+from common import dedupe_manifest, get_s3_client, highlight, peak_memory_gb, retry, setup_logging
 from config import (
     NCI_MANIFEST,
     OUTDIR,
@@ -122,15 +129,27 @@ if have_crt_checksums:
 checksum_candidates.append(("ChecksumCRC32", Crc32Checksum))
 
 
+def _read_temp_manifest_filepaths(path):
+    """Read one temp manifest's filepath column fully into a list, retrying
+    the whole read on failure (see common.retry) — this file lives on
+    /g/data mounted over the network onto the datamover VM, where a brief
+    hiccup can surface as a spurious mid-read error (e.g. _csv.Error: line
+    contains NUL). Temp manifests only ever hold one run's newly-queued
+    files, so materializing the (small) list is not a memory concern."""
+    def _read():
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            return [row["filepath"] for row in reader]
+
+    return retry(_read)
+
+
 def iter_temp_manifest_keys(temp_dirs):
     for temp_dir in temp_dirs:
         for csv_name in sorted(os.listdir(temp_dir)):
             if not csv_name.endswith(".csv"):
                 continue
-            with open(os.path.join(temp_dir, csv_name), newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    yield row["filepath"]
+            yield from _read_temp_manifest_filepaths(os.path.join(temp_dir, csv_name))
 
 
 def download_one(s3, key, log):
