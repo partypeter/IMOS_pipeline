@@ -42,6 +42,10 @@
 #         materializing that file (list of rows + a seen set + a deduped
 #         list) needed far more than the datamover VM's 32GB. The
 #         in-memory path is unchanged for every manifest below threshold.
+#    1.4: Added a dedicated MOVE log level + log_move() helper, so
+#         retract_diff.py's file-move lines are tagged [MOVE] instead of
+#         generic [INFO] — unifies its look with mv_to_prod.sh's own
+#         [MOVE]/[MOVED] bash log lines, per an explicit request.
 #
 # ================================================================
 # END_OF_HEADER
@@ -68,6 +72,13 @@ DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}Z$")
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# Dedicated level for file-move events, tagged [MOVE] like mv_to_prod.sh's
+# own [MOVE]/[MOVED] log lines instead of blending into generic [INFO] —
+# see log_move() below. Sits between INFO and WARNING so it's never
+# filtered out by setup_logging's log.setLevel(logging.INFO).
+MOVE = 25
+logging.addLevelName(MOVE, "MOVE")
 
 
 def setup_logging(stage_name, run_id=None):
@@ -125,6 +136,15 @@ def highlight(log, message, level="info"):
     file-only under the orchestrator (see setup_logging)."""
     getattr(log, level)(message)
     print(f"{datetime.datetime.now().strftime(TIMESTAMP_FORMAT)} [{level.upper()}] {message}", flush=True)
+
+
+def log_move(log, message):
+    """Log a file-move event at the dedicated MOVE level (see above), so
+    it's tagged [MOVE] the same way mv_to_prod.sh tags its own move lines
+    — greppable/visually consistent across the two move-related logs
+    (mv_to_prod.sh's bash log and retract_diff.py's Python log) instead of
+    blending into a generic [INFO] line."""
+    log.log(MOVE, message)
 
 
 def get_s3_client():

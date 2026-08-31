@@ -119,6 +119,10 @@
 #         both directories, and process_manifest resolves each prefix's
 #         manifest directory via config.manifest_dir_for_prefix() instead of
 #         always using NCI_MANIFEST.
+#    1.9: move_retracted_file's move line now goes through common.log_move
+#         (tagged [MOVE]) instead of log.info("...retracted — moved..."),
+#         to look the same as mv_to_prod.sh's own [MOVE]/[MOVED] lines —
+#         per an explicit request to unify the two move-related logs.
 #
 # ================================================================
 # END_OF_HEADER
@@ -131,7 +135,7 @@ import shutil
 import sys
 import time
 
-from common import find_latest_date_dir, highlight, peak_memory_gb, retry, setup_logging
+from common import find_latest_date_dir, highlight, log_move, peak_memory_gb, retry, setup_logging
 from config import (
     AODN_BASE,
     EXCLUDED_PREFIXES,
@@ -242,7 +246,7 @@ def move_retracted_file(key, run_datestamp, log):
     dst = os.path.join(OUTGOING_BASE, run_datestamp, key)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
-    log.info(f"{key}: retracted — moved {src} -> {dst}")
+    log_move(log, f"{src} -> {dst}")
     return True
 
 
