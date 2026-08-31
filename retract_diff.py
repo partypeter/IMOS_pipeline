@@ -123,6 +123,10 @@
 #         (tagged [MOVE]) instead of log.info("...retracted — moved..."),
 #         to look the same as mv_to_prod.sh's own [MOVE]/[MOVED] lines —
 #         per an explicit request to unify the two move-related logs.
+#    1.10: Tag renamed [MOVE] -> [MOVED] (common.py 1.5) to exactly match
+#          mv_to_prod.sh's per-file move tag; timestamps now drop the
+#          millisecond suffix (common.py's setup_logging), matching
+#          mv_to_prod.sh/coordinator.sh's bash `date` format.
 #
 # ================================================================
 # END_OF_HEADER

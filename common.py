@@ -46,6 +46,14 @@
 #         retract_diff.py's file-move lines are tagged [MOVE] instead of
 #         generic [INFO] — unifies its look with mv_to_prod.sh's own
 #         [MOVE]/[MOVED] bash log lines, per an explicit request.
+#    1.5: Tag renamed [MOVE] -> [MOVED] (matches mv_to_prod.sh's per-file
+#         move tag exactly, rather than its directory-level-move tag).
+#         setup_logging's Formatter now sets datefmt=TIMESTAMP_FORMAT, so
+#         every Python stage's file timestamps drop the millisecond
+#         suffix and match mv_to_prod.sh/coordinator.sh's own
+#         "YYYY-MM-DD HH:MM:SS" bash `date` format exactly — the two
+#         move-related logs (and every other stage's log) now share one
+#         consistent timestamp shape.
 #
 # ================================================================
 # END_OF_HEADER
@@ -73,12 +81,12 @@ DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}Z$")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# Dedicated level for file-move events, tagged [MOVE] like mv_to_prod.sh's
-# own [MOVE]/[MOVED] log lines instead of blending into generic [INFO] —
-# see log_move() below. Sits between INFO and WARNING so it's never
-# filtered out by setup_logging's log.setLevel(logging.INFO).
+# Dedicated level for file-move events, tagged [MOVED] — the same tag
+# mv_to_prod.sh's own per-file move line uses — instead of blending into
+# generic [INFO]. See log_move() below. Sits between INFO and WARNING so
+# it's never filtered out by setup_logging's log.setLevel(logging.INFO).
 MOVE = 25
-logging.addLevelName(MOVE, "MOVE")
+logging.addLevelName(MOVE, "MOVED")
 
 
 def setup_logging(stage_name, run_id=None):
@@ -110,7 +118,7 @@ def setup_logging(stage_name, run_id=None):
         handler.close()
         log.removeHandler(handler)
 
-    formatter = logging.Formatter(LOG_FORMAT)
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=TIMESTAMP_FORMAT)
 
     file_handler = logging.FileHandler(log_path, mode="a")
     file_handler.setFormatter(formatter)
@@ -140,10 +148,12 @@ def highlight(log, message, level="info"):
 
 def log_move(log, message):
     """Log a file-move event at the dedicated MOVE level (see above), so
-    it's tagged [MOVE] the same way mv_to_prod.sh tags its own move lines
-    — greppable/visually consistent across the two move-related logs
-    (mv_to_prod.sh's bash log and retract_diff.py's Python log) instead of
-    blending into a generic [INFO] line."""
+    it's tagged [MOVED] the same way mv_to_prod.sh tags its own per-file
+    move lines — greppable/visually consistent across the two
+    move-related logs (mv_to_prod.sh's bash log and retract_diff.py's
+    Python log) instead of blending into a generic [INFO] line. message
+    should be "source -> destination", matching mv_to_prod.sh's own
+    [MOVED] line shape."""
     log.log(MOVE, message)
 
 

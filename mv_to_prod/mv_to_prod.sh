@@ -75,6 +75,20 @@
 #         "would move" during a dry run, and pass 2's find prunes exactly
 #         those paths, mirroring what a real run would already do on its
 #         own.
+#    2.4: Every log line now goes through log(), which prepends a
+#         "YYYY-MM-DD HH:MM:SS" timestamp — same format coordinator.sh's
+#         own log() and the Python stages' logs already use — instead of
+#         a bare untimestamped echo (Starting/Completed's plain $(date)
+#         is gone too, now the same format as everything else). Pass 1's
+#         two-line "[MOVE] entry" / "-> dst_parent/" and pass 2's two-line
+#         destination-missing [WARN] are each collapsed to one line, and
+#         pass 2's [MOVED] line now shows "source -> destination" instead
+#         of destination only — unifies this log's shape with
+#         retract_diff.py's own move-event log line (which shows the same
+#         "source -> destination" content tagged [MOVED]), per an
+#         explicit request to make the two move-related logs look alike.
+#         Tag/count grep patterns below updated for the new unanchored
+#         (no longer 2-space-indented) line shape.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -114,11 +128,22 @@
 # Redirect all output to log file only (PBS output log will be empty)
 exec >> "$log_file" 2>&1
 
+# Same timestamp format as coordinator.sh's own log() and the Python
+# stages' logs, so every log line across the pipeline lines up. Exported
+# so pass 2's parallel xargs/bash -c workers (which run in separate
+# processes) can call it too.
+log() {
+  local level="$1"
+  shift
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [${level}] $*"
+}
+export -f log
+
 myname="${0##*/}"
-echo "Starting ${myname} at $(date)"
+log INFO "Starting ${myname}"
 
 if [ "$dry_run" = true ]; then
-  echo "  [DRY RUN] No files or directories will be moved."
+  log "DRY RUN" "No files or directories will be moved."
 fi
 
 echo ""
@@ -162,8 +187,7 @@ while [ "$queue_idx" -lt ${#queue[@]} ]; do
 
     if [ ! -d "$dst" ]; then
       dst_parent="${dst%/*}"
-      echo "  [MOVE] ${entry}"
-      echo "         -> ${dst_parent}/"
+      log MOVE "${entry} -> ${dst_parent}/"
       if [ "$dry_run" = false ]; then
         mv "$entry" "$dst_parent/"
       else
@@ -180,10 +204,10 @@ while [ "$queue_idx" -lt ${#queue[@]} ]; do
           latest_link="${vdir_parent}/latest"
           if [ ! -L "$latest_link" ]; then
             ln -s "$vdir_name" "$latest_link"
-            echo "  [SYMLINK] Created: ${latest_link} -> ${vdir_name}"
+            log SYMLINK "Created: ${latest_link} -> ${vdir_name}"
             (( count_symlinks_created++ ))
           else
-            echo "  [SYMLINK] Already exists: ${latest_link} — skipping"
+            log SYMLINK "Already exists: ${latest_link} — skipping"
           fi
         done < <(find "$dst" -type d -name 'v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' | sort)
       fi
@@ -226,20 +250,19 @@ move_one_file() {
 
   if [ ! -d "$dst_dir" ]; then
     # Should not occur after pass 1 — log it if it does
-    echo "  [WARN] Destination directory does not exist: ${dst_dir}"
-    echo "         ${file} was not moved."
+    log WARN "Destination directory does not exist: ${dst_dir} -- ${file} was not moved."
   elif [ -e "${dst_file}" ] && [ "$overwrite" = false ]; then
-    echo "  [SKIPPED] ${dst_file}"
+    log SKIPPED "${dst_file}"
   elif [ -e "${dst_file}" ] && [ "$overwrite" = true ]; then
     if [ "$dry_run" = false ]; then
       mv -f "${file}" "${dst_dir}/"
     fi
-    echo "  [OVERWRITE] ${dst_file}"
+    log OVERWRITE "${dst_file}"
   else
     if [ "$dry_run" = false ]; then
       mv "${file}" "${dst_dir}/"
     fi
-    echo "  [MOVED] ${dst_file}"
+    log MOVED "${file} -> ${dst_file}"
   fi
 }
 export -f move_one_file
@@ -272,9 +295,9 @@ find "$source_path" "${find_prune_args[@]}" \( -type f -o -type l \) -print | so
     done
   ' _
 
-count_files_moved=$(grep -c '^  \[MOVED\] ' "$log_file")
-count_files_overwritten=$(grep -c '^  \[OVERWRITE\] ' "$log_file")
-count_files_skipped=$(( $(grep -c '^  \[SKIPPED\] ' "$log_file") + $(grep -c '^  \[WARN\] ' "$log_file") ))
+count_files_moved=$(grep -c '\[MOVED\] ' "$log_file")
+count_files_overwritten=$(grep -c '\[OVERWRITE\] ' "$log_file")
+count_files_skipped=$(( $(grep -c '\[SKIPPED\] ' "$log_file") + $(grep -c '\[WARN\] ' "$log_file") ))
 
 echo ""
 echo "--- Pass 2 complete ---"
@@ -290,4 +313,4 @@ echo "  Files moved       (pass 2): ${count_files_moved}"
 echo "  Files overwritten (pass 2): ${count_files_overwritten}"
 echo "  Files skipped     (pass 2): ${count_files_skipped}"
 echo ""
-echo "Completed ${myname} at $(date)"
+log INFO "Completed ${myname}"
