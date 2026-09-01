@@ -47,12 +47,18 @@
 #         so nesting meant that route's Pass 1 saw WAVE_BUOY_OUTDIR as
 #         just another folder under OUTDIR and swept it into AODN_BASE
 #         wholesale (confirmed on a real run).
+#    1.5: PYTHON now defaults to "python3" (resolved from PATH) instead
+#         of a hardcoded venv path under one specific user's home
+#         directory — that path isn't valid for a different (e.g. shared)
+#         user running this pipeline with packages installed directly
+#         rather than in a dedicated virtualenv. Set PYTHON to an
+#         absolute interpreter path here if you do need a specific one.
 #
 # ================================================================
 # END_OF_HEADER
 # ================================================================
 
-PYTHON="/home/900/hxh900/myenv/bin/python3"
+PYTHON="python3"
 SCRIPT_DIR="/g/data/sh74/admin/ops/scripts"
 
 MANIFEST_MAIN="/g/data/sh74/admin/ops/"
