@@ -63,6 +63,9 @@
 #         are the single place compare_manifests.py/download.py/
 #         retract_diff.py all decide which directory a given prefix's
 #         files live under.
+#    1.8: WAVE_BUOY_BASE moved to its finalised location
+#         (/g/data/sh74/wave_buoy_data), replacing the interim
+#         admin/staging/wave_buoy_data path.
 #
 # ================================================================
 # END_OF_HEADER
@@ -225,11 +228,10 @@ RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
 AODN_BASE = "/g/data/sh74/IMOS_AODN"
 
 # Where mv_to_prod lands wave buoy data specifically (see WAVE_BUOY_OUTDIR
-# above), kept separate from AODN_BASE per an explicit request. Currently
-# an interim staging location — will move to /g/data/sh74/wave_buoy_data
-# once finalised (a one-line change here, same as AODN_BASE's own
-# staging -> final move).
-WAVE_BUOY_BASE = "/g/data/sh74/admin/staging/wave_buoy_data"
+# above), kept separate from AODN_BASE per an explicit request. Final
+# hosting location (was an interim staging path under admin/staging/
+# before this).
+WAVE_BUOY_BASE = "/g/data/sh74/wave_buoy_data"
 
 OUTGOING_BASE = "/g/data/sh74/admin/outgoing"
 OUTGOING_RETENTION_DAYS = 28

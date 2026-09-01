@@ -53,6 +53,9 @@
 #         user running this pipeline with packages installed directly
 #         rather than in a dedicated virtualenv. Set PYTHON to an
 #         absolute interpreter path here if you do need a specific one.
+#    1.6: WAVE_BUOY_BASE moved to its finalised location
+#         (/g/data/sh74/wave_buoy_data), replacing the interim
+#         admin/staging/wave_buoy_data path.
 #
 # ================================================================
 # END_OF_HEADER
@@ -74,10 +77,10 @@ OUTDIR="/g/data/sh74/admin/incoming"
 # Wave buoy data's own destination, kept separate from AODN_BASE/OUTDIR
 # per an explicit request (see coordinator.sh's second mv_to_prod route).
 # WAVE_BUOY_OUTDIR must be a sibling of OUTDIR, not nested inside it (see
-# VERSION 1.4 above). WAVE_BUOY_BASE is currently an interim staging
-# location — will move to /g/data/sh74/wave_buoy_data once finalised.
+# VERSION 1.4 above). WAVE_BUOY_BASE is its finalised location (was an
+# interim staging path under admin/staging/ before this).
 WAVE_BUOY_OUTDIR="/g/data/sh74/admin/incoming_wave_buoy"
-WAVE_BUOY_BASE="/g/data/sh74/admin/staging/wave_buoy_data"
+WAVE_BUOY_BASE="/g/data/sh74/wave_buoy_data"
 
 # Canonical per-run log file path for one pipeline stage — mirrors
 # config.py's stage_log_path(). Usage: stage_log_path <stage_name> <run_id>
