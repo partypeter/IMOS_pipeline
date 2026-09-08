@@ -66,6 +66,15 @@
 #    1.8: WAVE_BUOY_BASE moved to its finalised location
 #         (/g/data/sh74/wave_buoy_data), replacing the interim
 #         admin/staging/wave_buoy_data path.
+#    1.9: WAVE_BUOY_BASE nested under AODN_BASE
+#         (AODN_BASE/wave_buoy_data) instead of being a sibling — per
+#         an explicit request. Safe unlike the earlier WAVE_BUOY_OUTDIR
+#         nesting bug: that was a source_path nested inside another
+#         route's source_path (which mv_to_prod.sh's Pass 1 BFS walks);
+#         WAVE_BUOY_BASE is only ever a target_path, and neither
+#         mv_to_prod.sh pass ever scans a target_path's own contents,
+#         so the main route (source=OUTDIR, target=AODN_BASE) never
+#         sees this subfolder.
 #
 # ================================================================
 # END_OF_HEADER
@@ -228,10 +237,10 @@ RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
 AODN_BASE = "/g/data/sh74/IMOS_AODN"
 
 # Where mv_to_prod lands wave buoy data specifically (see WAVE_BUOY_OUTDIR
-# above), kept separate from AODN_BASE per an explicit request. Final
-# hosting location (was an interim staging path under admin/staging/
-# before this).
-WAVE_BUOY_BASE = "/g/data/sh74/wave_buoy_data"
+# above) — nested under AODN_BASE (see VERSION 1.9). Safe because this is
+# only ever a target_path, never a source_path (see VERSION 1.9 for why
+# that distinction matters).
+WAVE_BUOY_BASE = os.path.join(AODN_BASE, "wave_buoy_data")
 
 OUTGOING_BASE = "/g/data/sh74/admin/outgoing"
 OUTGOING_RETENTION_DAYS = 28

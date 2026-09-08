@@ -56,6 +56,15 @@
 #    1.6: WAVE_BUOY_BASE moved to its finalised location
 #         (/g/data/sh74/wave_buoy_data), replacing the interim
 #         admin/staging/wave_buoy_data path.
+#    1.7: WAVE_BUOY_BASE nested under AODN_BASE
+#         (AODN_BASE/wave_buoy_data) instead of being a sibling — per
+#         an explicit request. Safe unlike the earlier WAVE_BUOY_OUTDIR
+#         nesting bug: that was a source_path nested inside another
+#         route's source_path (which mv_to_prod.sh's Pass 1 BFS walks);
+#         WAVE_BUOY_BASE is only ever a target_path, and neither
+#         mv_to_prod.sh pass ever scans a target_path's own contents,
+#         so the main route (source=OUTDIR, target=AODN_BASE) never
+#         sees this subfolder.
 #
 # ================================================================
 # END_OF_HEADER
@@ -74,13 +83,13 @@ LOGS_BASE="${MANIFEST_MAIN}logs"
 AODN_BASE="/g/data/sh74/IMOS_AODN"
 OUTDIR="/g/data/sh74/admin/incoming"
 
-# Wave buoy data's own destination, kept separate from AODN_BASE/OUTDIR
-# per an explicit request (see coordinator.sh's second mv_to_prod route).
-# WAVE_BUOY_OUTDIR must be a sibling of OUTDIR, not nested inside it (see
-# VERSION 1.4 above). WAVE_BUOY_BASE is its finalised location (was an
-# interim staging path under admin/staging/ before this).
+# Wave buoy data's own destination (see coordinator.sh's second
+# mv_to_prod route). WAVE_BUOY_OUTDIR must still be a sibling of OUTDIR,
+# not nested inside it (see VERSION 1.4 above) — that's a source_path.
+# WAVE_BUOY_BASE is nested under AODN_BASE (see VERSION 1.7) — that's a
+# target_path, so the source-nesting bug's precedent doesn't apply.
 WAVE_BUOY_OUTDIR="/g/data/sh74/admin/incoming_wave_buoy"
-WAVE_BUOY_BASE="/g/data/sh74/wave_buoy_data"
+WAVE_BUOY_BASE="${AODN_BASE}/wave_buoy_data"
 
 # Canonical per-run log file path for one pipeline stage — mirrors
 # config.py's stage_log_path(). Usage: stage_log_path <stage_name> <run_id>
