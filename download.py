@@ -82,6 +82,11 @@
 #         already hardened against; download.py's own read of these files
 #         had no equivalent protection until now. Fixes a real production
 #         crash.
+#    1.6: Added apply_acls() — after each run, recursively sets the
+#         sh74/rt82 group ACLs (default + existing) on OUTDIR and
+#         WAVE_BUOY_OUTDIR via setfacl, per an explicit request. A failure
+#         here is logged but not fatal — it shouldn't undo an otherwise
+#         successful download run.
 #
 # ================================================================
 # END_OF_HEADER
@@ -89,6 +94,7 @@
 
 import csv
 import os
+import subprocess
 import time
 
 from botocore.exceptions import ClientError
@@ -118,6 +124,12 @@ MANIFEST_GROUPS = ((TEMP_DIR, NCI_MANIFEST), (WAVE_BUOY_TEMP_DIR, WAVE_BUOY_MANI
 
 chunk_size = 8 * 1024 * 1024  # 8 MB
 progress_interval = 3600  # seconds — how often to log a running speed estimate
+
+# ACL spec applied to every file/dir downloaded this run (see apply_acls()):
+# sh74/rt82 groups get read+execute, rt82_w gets read+write+execute, and
+# access is otherwise closed off to "other" — shared read access for both
+# projects plus write access for the rt82 write group.
+ACL_SPEC = "g::r-x,g:sh74:r-x,g:sh74_w:r-x,g:rt82:r-x,g:rt82_w:rwx,mask:rwx,other:---"
 
 # Preference order: (response field name, checksum class)
 checksum_candidates = [("ChecksumSHA256", Sha256Checksum), ("ChecksumSHA1", Sha1Checksum)]
@@ -236,6 +248,17 @@ def merge_temp_into_persistent(log):
                 )
 
 
+def apply_acls(folder, log):
+    """Recursively set the ACL_SPEC group ACLs on everything downloaded into
+    folder this run — both the default ACL (-d, inherited by files/dirs
+    created here in future runs) and the ACL on what's already there."""
+    for args in (["-R", "-d", "-m", ACL_SPEC, folder], ["-R", "-m", ACL_SPEC, folder]):
+        try:
+            subprocess.run(["setfacl", *args], check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            highlight(log, f"setfacl {' '.join(args)}: FAILED ({e})", level="error")
+
+
 def main():
     overall_start = time.perf_counter()
     log, run_id, log_path = setup_logging("download")
@@ -275,6 +298,10 @@ def main():
 
     log.info("Downloads complete — merging temp manifests into persistent manifest")
     merge_temp_into_persistent(log)
+
+    log.info("Applying ACLs")
+    apply_acls(OUTDIR, log)
+    apply_acls(WAVE_BUOY_OUTDIR, log)
 
     overall_elapsed = time.perf_counter() - overall_start
     overall_speed = (total_bytes / (1024 * 1024)) / overall_elapsed if overall_elapsed > 0 else 0.0

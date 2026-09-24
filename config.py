@@ -75,6 +75,10 @@
 #         mv_to_prod.sh pass ever scans a target_path's own contents,
 #         so the main route (source=OUTDIR, target=AODN_BASE) never
 #         sees this subfolder.
+#    1.10: MIN_LIVE_INVENTORY_RATIO raised from 0.5 to 0.9 — retract_diff.py
+#          now aborts on a 10% (or greater) drop in live keys vs. persistent
+#          manifests, tightening the guard against treating a broken/
+#          incomplete inventory scan as genuine mass retraction.
 #
 # ================================================================
 # END_OF_HEADER
@@ -249,8 +253,9 @@ OUTGOING_RETENTION_DAYS = 28
 # live keys than this fraction of what's currently tracked across all
 # persistent manifests, that's treated as a broken/incomplete inventory
 # scan rather than genuine mass retraction, and the whole run aborts
-# without touching any files or manifests.
-MIN_LIVE_INVENTORY_RATIO = 0.5
+# without touching any files or manifests. 0.9 means a drop of 10% or
+# more in live keys aborts the run (see VERSION 1.10).
+MIN_LIVE_INVENTORY_RATIO = 0.9
 
 # compare_manifests.py: prefixes whose persistent manifest has more rows
 # than this switch from the in-memory diff to an external sort+join diff
