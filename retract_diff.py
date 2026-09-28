@@ -127,6 +127,14 @@
 #          mv_to_prod.sh's per-file move tag; timestamps now drop the
 #          millisecond suffix (common.py's setup_logging), matching
 #          mv_to_prod.sh/coordinator.sh's bash `date` format.
+#    1.11: Inventory keys are now urllib.parse.unquote()'d right where
+#          they're read from the raw S3 Inventory CSV, matching
+#          compare_manifests.py's equivalent fix — that CSV format
+#          URL-encodes the Key column, so a key with a reserved character
+#          was compared against the persistent manifest in its still-
+#          encoded form, making it look perpetually "still live" and
+#          permanently un-retractable even after the real object was long
+#          gone. Fixes a real retraction blind spot.
 #
 # ================================================================
 # END_OF_HEADER
@@ -138,6 +146,7 @@ import os
 import shutil
 import sys
 import time
+from urllib.parse import unquote
 
 from common import find_latest_date_dir, highlight, log_move, peak_memory_gb, retry, setup_logging
 from config import (
@@ -182,7 +191,7 @@ def stream_inventory_keys_to_scratch(date_dir, scratch_dir, log):
                 for row in reader:
                     if len(row) < 5:
                         continue
-                    key = row[1]
+                    key = unquote(row[1])
                     prefix = resolve_prefix(key)
                     if prefix is None:
                         continue

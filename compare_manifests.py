@@ -94,6 +94,19 @@
 #         pending-batch check is now independent per directory — a stuck
 #         wave buoy batch no longer blocks IMOS prefixes from processing
 #         this run, and vice versa.
+#    1.7: Inventory keys are now urllib.parse.unquote()'d right where
+#         they're read from the raw S3 Inventory CSV — that CSV format
+#         URL-encodes the Key column (a documented AWS behavior), so any
+#         key with a reserved character (e.g. "@" -> "%40") was being
+#         recorded, requested, and locally pathed in its still-encoded
+#         (wrong) form everywhere downstream. Fixes a real bug: such a key
+#         could never download successfully (NoSuchKey against the
+#         encoded, nonexistent S3 key) and, once merged into the
+#         persistent manifest regardless (see download.py's accepted
+#         simplification), could never be retracted either, since the
+#         inventory always re-encodes it the same way — retract_diff.py
+#         (which now decodes the same way, at its own equivalent read
+#         point) would see it as perpetually "still live."
 #
 # ================================================================
 # END_OF_HEADER
@@ -103,6 +116,7 @@ import csv
 import os
 import subprocess
 import time
+from urllib.parse import unquote
 
 from common import count_csv_rows, find_latest_date_dir, get_s3_client, highlight, peak_memory_gb, read_csv_rows, setup_logging
 from config import (
@@ -319,7 +333,7 @@ def main():
                 for row in reader:
                     if len(row) < 5:
                         continue
-                    key, etag = row[1], row[4]
+                    key, etag = unquote(row[1]), row[4]
 
                     prefix = resolve_prefix(key)
                     if prefix is None or prefix not in valid_prefixes:
