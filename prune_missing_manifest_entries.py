@@ -82,7 +82,7 @@ from config import (
 
 MANIFEST_DIRS = (NCI_MANIFEST, WAVE_BUOY_MANIFEST)
 BATCH_SIZE = 2000
-DEFAULT_WORKERS = 32
+DEFAULT_WORKERS = 16
 
 
 def _file_exists(path):
