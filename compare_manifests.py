@@ -107,6 +107,12 @@
 #         inventory always re-encodes it the same way — retract_diff.py
 #         (which now decodes the same way, at its own equivalent read
 #         point) would see it as perpetually "still live."
+#    1.8: The large-prefix diff's scratch files are now tab-separated
+#         instead of comma-separated. sort/join compared only up to the
+#         first comma, so a filepath containing a comma could be wrongly
+#         treated as already tracked, or queued truncated at the comma.
+#         Latent until 1.7: the inventory delivered commas percent-
+#         encoded, so decoded keys are the first to contain real ones.
 #
 # ================================================================
 # END_OF_HEADER
@@ -186,17 +192,21 @@ def prepare_large_prefix_reference(prefix, shard_csv, scratch_dir):
 
 
 def reconcile_large_prefix(prefix, raw_inventory_path, sorted_persistent_path, scratch_dir, temp_csv, log):
-    """Phase 3 for a large prefix: sort the raw (filepath,etag) rows
+    """Phase 3 for a large prefix: sort the raw filepath<TAB>etag rows
     collected for it during the inventory scan, then join against its
     sorted persistent filepaths to find inventory rows with no match —
     i.e. new files. `join -v1` keeps an unmatched line from the inventory
     side whole, so the etag column survives; a plain `comm` would only
     tell us the filepaths matched or didn't, since it compares whole
     lines. The join's output is streamed straight to disk one row at a
-    time, so memory use here stays flat regardless of prefix size."""
-    sorted_inventory_path = os.path.join(scratch_dir, f"{prefix}_inventory.sorted.csv")
+    time, so memory use here stays flat regardless of prefix size.
+
+    Tab-separated, not comma: filepaths can legitimately contain commas
+    (a tab can't appear in a Windows-legal filename), and sort/join only
+    compare up to the first separator."""
+    sorted_inventory_path = os.path.join(scratch_dir, f"{prefix}_inventory.sorted.tsv")
     subprocess.run(
-        ["sort", "-t", ",", "-k1,1", "-T", scratch_dir, "-o", sorted_inventory_path, raw_inventory_path],
+        ["sort", "-t", "\t", "-k1,1", "-T", scratch_dir, "-o", sorted_inventory_path, raw_inventory_path],
         check=True,
         env={**os.environ, "LC_ALL": "C"},
     )
@@ -207,7 +217,7 @@ def reconcile_large_prefix(prefix, raw_inventory_path, sorted_persistent_path, s
         writer = csv.writer(fout)
         writer.writerow(["filepath", "checksum"])
         proc = subprocess.Popen(
-            ["join", "-t", ",", "-v1", "-1", "1", "-2", "1", sorted_inventory_path, sorted_persistent_path],
+            ["join", "-t", "\t", "-v1", "-1", "1", "-2", "1", sorted_inventory_path, sorted_persistent_path],
             stdout=subprocess.PIPE,
             text=True,
             env={**os.environ, "LC_ALL": "C"},
@@ -216,7 +226,7 @@ def reconcile_large_prefix(prefix, raw_inventory_path, sorted_persistent_path, s
             line = line.rstrip("\n")
             if not line:
                 continue
-            filepath, etag = line.split(",", 1)
+            filepath, etag = line.split("\t", 1)
             writer.writerow([filepath, etag])
             count += 1
         returncode = proc.wait()
@@ -341,9 +351,9 @@ def main():
 
                     if prefix in large_prefixes:
                         if prefix not in raw_writers:
-                            raw_path = os.path.join(COMPARE_SCRATCH_DIR, f"{prefix}_inventory_raw.csv")
+                            raw_path = os.path.join(COMPARE_SCRATCH_DIR, f"{prefix}_inventory_raw.tsv")
                             raw_writers[prefix] = open(raw_path, "w")
-                        raw_writers[prefix].write(f"{key},{etag}\n")
+                        raw_writers[prefix].write(f"{key}\t{etag}\n")
                         continue
 
                     if key in shard_existing[prefix]:
@@ -372,7 +382,7 @@ def main():
             # No inventory rows matched this prefix at all this run.
             os.remove(sorted_persistent_path)
             continue
-        raw_path = os.path.join(COMPARE_SCRATCH_DIR, f"{prefix}_inventory_raw.csv")
+        raw_path = os.path.join(COMPARE_SCRATCH_DIR, f"{prefix}_inventory_raw.tsv")
         temp_csv = os.path.join(temp_dir_for_prefix(prefix), f"{prefix}.csv")
         new_counts[prefix] = reconcile_large_prefix(
             prefix, raw_path, sorted_persistent_path, COMPARE_SCRATCH_DIR, temp_csv, log

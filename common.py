@@ -54,6 +54,13 @@
 #         "YYYY-MM-DD HH:MM:SS" bash `date` format exactly — the two
 #         move-related logs (and every other stage's log) now share one
 #         consistent timestamp shape.
+#    1.6: dedupe_manifest's disk-based path now uses tab-separated scratch
+#         lines and writes the result back through csv.writer. With
+#         comma-separated lines, sort -u -k1,1 collapsed distinct
+#         filepaths that shared text before a comma, and the raw rewrite
+#         left comma-containing filepaths unquoted, breaking those rows.
+#         Latent until compare_manifests.py started URL-decoding
+#         inventory keys, which is what first let real commas through.
 #
 # ================================================================
 # END_OF_HEADER
@@ -65,7 +72,6 @@ import logging
 import os
 import re
 import resource
-import shutil
 import subprocess
 import sys
 import time
@@ -271,12 +277,15 @@ def dedupe_manifest(persistent_csv, log):
 
 def _dedupe_manifest_large(persistent_csv, row_count, log):
     """dedupe_manifest()'s disk-based path (see its docstring). Extracts
-    the data rows as plain "filepath,checksum" lines (same convention
-    compare_manifests.py's large-prefix scratch files already use —
-    assumes no embedded commas, true of every filepath/checksum this
-    pipeline has ever seen), sorts+dedups them with GNU sort -u -k1,1
-    (never holding the file's contents in memory), then reassembles
-    header + deduped rows atomically."""
+    the data rows as tab-separated lines, sorts+dedups them with GNU
+    sort -u -k1,1 (never holding the file's contents in memory), then
+    reassembles header + deduped rows atomically through csv.writer.
+
+    Tab, not comma: filepaths can contain commas (a tab can't appear in a
+    Windows-legal filename), and sort -u -k1,1 only compares up to the
+    first separator — with commas, distinct filepaths sharing a prefix
+    were collapsed as "duplicates". Rows are written back via csv.writer
+    so a comma-containing filepath stays correctly quoted."""
     os.makedirs(DEDUPE_SCRATCH_DIR, exist_ok=True)
     base = os.path.basename(persistent_csv)
     data_only = os.path.join(DEDUPE_SCRATCH_DIR, f"{base}.data")
@@ -287,10 +296,10 @@ def _dedupe_manifest_large(persistent_csv, row_count, log):
         header = next(reader, None)
         with open(data_only, "w") as f_out:
             for row in reader:
-                f_out.write(",".join(row) + "\n")
+                f_out.write("\t".join(row) + "\n")
 
     subprocess.run(
-        ["sort", "-t", ",", "-k1,1", "-u", "-T", DEDUPE_SCRATCH_DIR, "-o", deduped_path, data_only],
+        ["sort", "-t", "\t", "-k1,1", "-u", "-T", DEDUPE_SCRATCH_DIR, "-o", deduped_path, data_only],
         check=True,
         env={**os.environ, "LC_ALL": "C"},
     )
@@ -302,11 +311,13 @@ def _dedupe_manifest_large(persistent_csv, row_count, log):
 
     if removed:
         tmp_csv = persistent_csv + ".tmp"
-        with open(tmp_csv, "w") as f_out:
+        with open(tmp_csv, "w", newline="") as f_out:
+            writer = csv.writer(f_out)
             if header is not None:
-                f_out.write(",".join(header) + "\n")
+                writer.writerow(header)
             with open(deduped_path) as f_in:
-                shutil.copyfileobj(f_in, f_out)
+                for line in f_in:
+                    writer.writerow(line.rstrip("\n").split("\t"))
         os.replace(tmp_csv, persistent_csv)
         log.info(f"{base}: removed {removed} duplicate entrie(s) via disk-based dedup")
 
