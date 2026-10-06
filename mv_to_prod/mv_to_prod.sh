@@ -89,6 +89,16 @@
 #         explicit request to make the two move-related logs look alike.
 #         Tag/count grep patterns below updated for the new unanchored
 #         (no longer 2-space-indented) line shape.
+#    2.5: Pass 2's find | sort | xargs pipeline is now NUL-delimited
+#         (-print0 / sort -z / xargs -0). Plain xargs splits on
+#         whitespace and interprets quotes/backslashes, so a file whose
+#         name contained a space (e.g. "IEEE Sirius paper.pdf") was
+#         handed to move_one_file as several nonexistent paths and never
+#         moved — latent until compare_manifests.py started URL-decoding
+#         inventory keys, after which such files could download at all.
+#         Also, [MOVED]/[OVERWRITE] are now only logged when mv actually
+#         succeeds; a failed mv is logged [FAILED] (counted in the
+#         summary) instead of being reported as a successful move.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -254,13 +264,15 @@ move_one_file() {
   elif [ -e "${dst_file}" ] && [ "$overwrite" = false ]; then
     log SKIPPED "${dst_file}"
   elif [ -e "${dst_file}" ] && [ "$overwrite" = true ]; then
-    if [ "$dry_run" = false ]; then
-      mv -f "${file}" "${dst_dir}/"
+    if [ "$dry_run" = false ] && ! mv -f "${file}" "${dst_dir}/"; then
+      log FAILED "${file} -> ${dst_file}"
+      return
     fi
     log OVERWRITE "${dst_file}"
   else
-    if [ "$dry_run" = false ]; then
-      mv "${file}" "${dst_dir}/"
+    if [ "$dry_run" = false ] && ! mv "${file}" "${dst_dir}/"; then
+      log FAILED "${file} -> ${dst_file}"
+      return
     fi
     log MOVED "${file} -> ${dst_file}"
   fi
@@ -288,8 +300,10 @@ if [ "${#dry_run_pruned_dirs[@]}" -gt 0 ]; then
   find_prune_args+=(")" "-prune" "-o")
 fi
 
-find "$source_path" "${find_prune_args[@]}" \( -type f -o -type l \) -print | sort | \
-  xargs -P "$pass2_parallel_jobs" -n "$pass2_batch_size" bash -c '
+# NUL-delimited end to end: filenames can contain spaces, quotes or
+# backslashes, which plain xargs would split or reinterpret.
+find "$source_path" "${find_prune_args[@]}" \( -type f -o -type l \) -print0 | sort -z | \
+  xargs -0 -P "$pass2_parallel_jobs" -n "$pass2_batch_size" bash -c '
     for file in "$@"; do
       move_one_file "$file"
     done
@@ -298,12 +312,14 @@ find "$source_path" "${find_prune_args[@]}" \( -type f -o -type l \) -print | so
 count_files_moved=$(grep -c '\[MOVED\] ' "$log_file")
 count_files_overwritten=$(grep -c '\[OVERWRITE\] ' "$log_file")
 count_files_skipped=$(( $(grep -c '\[SKIPPED\] ' "$log_file") + $(grep -c '\[WARN\] ' "$log_file") ))
+count_files_failed=$(grep -c '\[FAILED\] ' "$log_file")
 
 echo ""
 echo "--- Pass 2 complete ---"
 echo "    Moved:       ${count_files_moved}"
 echo "    Overwritten: ${count_files_overwritten}"
 echo "    Skipped:     ${count_files_skipped}"
+echo "    Failed:      ${count_files_failed}"
 echo ""
 
 echo "Summary:"
@@ -312,5 +328,6 @@ echo "  Symlinks created  (pass 1): ${count_symlinks_created}"
 echo "  Files moved       (pass 2): ${count_files_moved}"
 echo "  Files overwritten (pass 2): ${count_files_overwritten}"
 echo "  Files skipped     (pass 2): ${count_files_skipped}"
+echo "  Files failed      (pass 2): ${count_files_failed}"
 echo ""
 log INFO "Completed ${myname}"
