@@ -99,6 +99,13 @@
 #         Also, [MOVED]/[OVERWRITE] are now only logged when mv actually
 #         succeeds; a failed mv is logged [FAILED] (counted in the
 #         summary) instead of being reported as a successful move.
+#    2.6: Pass 1 now enables dotglob, so directories whose names start
+#         with "." are moved/descended into like any other — previously
+#         skipped, which left their files for pass 2 to strand (missing
+#         destination directory) and tripped coordinator.sh's leftover
+#         check. Dry run's pruned-directory paths are now glob-escaped
+#         before being handed to find -path, so names containing
+#         [ ] * ? no longer cause false "destination missing" warnings.
 #
 # NOTES / FUTURE IMPROVEMENTS
 #    - The "latest" symlink is only created if it does not already
@@ -180,6 +187,11 @@ dry_run_pruned_dirs=()
 
 echo "--- Pass 1: directory-level moves (BFS) ---"
 echo ""
+
+# Without dotglob, "*/" below skips directories whose names start with
+# "." — they'd never be moved or descended into here, and pass 2 would
+# then strand their files (destination directory missing).
+shopt -s dotglob
 
 queue=("$source_path")
 queue_idx=0
@@ -295,6 +307,8 @@ if [ "${#dry_run_pruned_dirs[@]}" -gt 0 ]; then
   find_prune_args+=("(")
   for d in "${dry_run_pruned_dirs[@]}"; do
     [ "${#find_prune_args[@]}" -gt 1 ] && find_prune_args+=("-o")
+    # -path takes a glob pattern; escape \ * ? [ so they match literally.
+    d="${d//\\/\\\\}"; d="${d//\*/\\*}"; d="${d//\?/\\?}"; d="${d//\[/\\[}"
     find_prune_args+=("-path" "$d")
   done
   find_prune_args+=(")" "-prune" "-o")
