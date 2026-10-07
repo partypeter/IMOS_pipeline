@@ -1,10 +1,11 @@
 #!/bin/bash
 #PBS -N prune_scan
+#PBS -P eq93
 #PBS -q normal
 #PBS -l ncpus=16
 #PBS -l mem=64GB
 #PBS -l jobfs=200GB
-#PBS -l walltime=12:00:00
+#PBS -l walltime=10:00:00
 #PBS -l storage=gdata/sh74+gdata/uc0
 #PBS -l wd
 #PBS -j oe
@@ -14,8 +15,8 @@
 #- license     GNU General Public License
 # ------------------------------------------------------------------
 # SYNOPSIS
-#    cd <repo checkout> && qsub -P <project> prune_scan.pbs
-#    Optional: -v OUT=<dir>,JOBS=<n>,SORT_MEM=<size>,PYTHON=<interpreter>
+#    cd <repo checkout> && qsub prune_scan.pbs
+#    Optional: -v JOBS=<n>,SORT_MEM=<size>,PYTHON=<interpreter>
 #
 # DESCRIPTION
 #    One-time maintenance job, not part of the daily pipeline. Read-only:
@@ -37,13 +38,15 @@
 #    Any listing failure aborts the job without writing missing.lst — an
 #    unlisted directory would make all its files look missing.
 #
-#    Defaults: OUT=<submit dir>/prune_scan_<job id>, JOBS=ncpus,
-#    SORT_MEM=24G (sorts run one at a time; keep well under mem).
+#    Output goes to OUT_BASE/<date>_<job id>/ (set below). Defaults:
+#    JOBS=ncpus, SORT_MEM=24G (sorts run one at a time; keep well under mem).
 #
 # VERSION
 #    1.0: Initial implementation
 #    1.1: Manifests are read from the backup on /g/data (see
 #         prune_scan_helper.py 1.1).
+#    1.2: Project and output location fixed in the script (PBS -P, OUT_BASE)
+#         instead of passed at submission; walltime 10h.
 #
 # ================================================================
 # END_OF_HEADER
@@ -54,7 +57,8 @@ export LC_ALL=C
 
 REPO="${REPO:-${PBS_O_WORKDIR:-$(cd "$(dirname "$0")" && pwd)}}"
 JOBID="${PBS_JOBID:-$(date +%Y%m%d%H%M%S)}"
-OUT="${OUT:-$REPO/prune_scan_${JOBID%%.*}}"
+OUT_BASE="/g/data/uc0/hxh900/projects/sh74/prune_manifest"
+OUT="${OUT_BASE}/$(date +%Y%m%d)_${JOBID%%.*}"
 JOBS="${JOBS:-${PBS_NCPUS:-$(nproc)}}"
 SORT_MEM="${SORT_MEM:-24G}"
 PYTHON="${PYTHON:-python3}"
