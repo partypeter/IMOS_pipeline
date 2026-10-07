@@ -13,7 +13,9 @@
 #    daily pipeline). Imports config.py only — no boto3/common.py — so it
 #    runs on a Gadi compute node's system python3 (3.6).
 #
-#    keys:    writes every persistent-manifest entry as an absolute local
+#    keys:    writes every entry of the manifest backup on /g/data
+#             (MANIFEST_BACKUP — the live manifests are on the datamover
+#             VM's local volume, out of a Gadi node's reach) as an absolute local
 #             path (base + key; one per line, unsorted), plus the set of
 #             directories two levels below each base that those entries
 #             live under — the roots prune_scan.pbs lists on disk. The odd
@@ -24,6 +26,8 @@
 #
 # VERSION
 #    1.0: Initial implementation
+#    1.1: Reads the manifest backup (MANIFEST_BACKUP) instead of the live
+#         manifests, which moved to the datamover VM's local volume.
 #
 # ================================================================
 # END_OF_HEADER
@@ -34,10 +38,15 @@ import csv
 import os
 import sys
 
-from config import AODN_BASE, NCI_MANIFEST, WAVE_BUOY_BASE, WAVE_BUOY_MANIFEST, resolve_prefix
+from config import AODN_BASE, MANIFEST_BACKUP, NCI_MANIFEST, WAVE_BUOY_BASE, WAVE_BUOY_MANIFEST, resolve_prefix
 
-# (manifest directory, local base its keys live under)
-GROUPS = ((NCI_MANIFEST, AODN_BASE), (WAVE_BUOY_MANIFEST, WAVE_BUOY_BASE))
+
+def backup_dir(manifest_dir):
+    return os.path.join(MANIFEST_BACKUP, os.path.basename(os.path.normpath(manifest_dir)))
+
+
+# (manifest backup directory, local base its keys live under)
+GROUPS = ((backup_dir(NCI_MANIFEST), AODN_BASE), (backup_dir(WAVE_BUOY_MANIFEST), WAVE_BUOY_BASE))
 
 
 def key_for(path):

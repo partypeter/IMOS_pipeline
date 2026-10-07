@@ -149,10 +149,10 @@ checksum_candidates.append(("ChecksumCRC32", Crc32Checksum))
 
 def _read_temp_manifest_filepaths(path):
     """Read one temp manifest's filepath column fully into a list, retrying
-    the whole read on failure (see common.retry) — this file lives on
-    /g/data mounted over the network onto the datamover VM, where a brief
-    hiccup can surface as a spurious mid-read error (e.g. _csv.Error: line
-    contains NUL). Temp manifests only ever hold one run's newly-queued
+    the whole read on failure (see common.retry) — added while temp
+    manifests lived on /g/data mounted over NFS onto the datamover VM,
+    where a brief hiccup could surface as a spurious mid-read error (e.g.
+    _csv.Error: line contains NUL). Temp manifests only ever hold one run's newly-queued
     files, so materializing the (small) list is not a memory concern."""
     def _read():
         with open(path, newline="") as f:
