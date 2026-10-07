@@ -26,7 +26,8 @@
 #    Lists directories instead of checking files one at a time, run on a
 #    Gadi node where /g/data is native Lustre rather than NFS:
 #      1. prune_scan_helper.py writes every manifest entry as an absolute
-#         path, plus the directories two levels below each base that the
+#         path (from the manifest backup on /g/data, as of the last
+#         pipeline run — backup_manifests.py), plus the directories two levels below each base that the
 #         entries live under (e.g. IMOS_AODN/IMOS/AUV).
 #      2. Each of those roots is split into tasks — the files directly in
 #         the root and in each child directory, plus every grandchild
@@ -41,6 +42,8 @@
 #
 # VERSION
 #    1.0: Initial implementation
+#    1.1: Manifests are read from the backup on /g/data (see
+#         prune_scan_helper.py 1.1).
 #
 # ================================================================
 # END_OF_HEADER

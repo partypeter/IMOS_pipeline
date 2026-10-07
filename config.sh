@@ -17,6 +17,7 @@
 #    equivalent values, since bash can't import a Python module. The two
 #    files must be kept in sync by hand:
 #      MANIFEST_MAIN    <-> config.py MANIFEST_MAIN
+#      OPS_GDATA        <-> config.py OPS_GDATA
 #      INVENTORY_DIR    <-> config.py INVENTORY_DIR
 #      LOGS_BASE        <-> config.py LOGS_BASE
 #      OUTDIR           <-> config.py OUTDIR
@@ -65,17 +66,22 @@
 #         mv_to_prod.sh pass ever scans a target_path's own contents,
 #         so the main route (source=OUTDIR, target=AODN_BASE) never
 #         sees this subfolder.
+#    1.8: MANIFEST_MAIN (and with it INVENTORY_DIR) moved to the datamover
+#         VM's local volume (/scratch/ops), mirroring config.py 1.11. Logs
+#         and scripts stay on /g/data under OPS_GDATA.
 #
 # ================================================================
 # END_OF_HEADER
 # ================================================================
 
 PYTHON="python3"
-SCRIPT_DIR="/g/data/sh74/admin/ops/scripts"
+OPS_GDATA="/g/data/sh74/admin/ops/"
+SCRIPT_DIR="${OPS_GDATA}scripts"
 
-MANIFEST_MAIN="/g/data/sh74/admin/ops/"
+# Manifests and inventory live on the VM's local volume (see VERSION 1.8).
+MANIFEST_MAIN="/scratch/ops/"
 INVENTORY_DIR="${MANIFEST_MAIN}IMOS_inventory"
-LOGS_BASE="${MANIFEST_MAIN}logs"
+LOGS_BASE="${OPS_GDATA}logs"
 
 # Where mv_to_prod lands files — the final, permanent hosting location
 # (mv_to_prod/coordinator.sh's target_path) — and where download.py puts

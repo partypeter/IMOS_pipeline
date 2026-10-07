@@ -79,6 +79,14 @@
 #          now aborts on a 10% (or greater) drop in live keys vs. persistent
 #          manifests, tightening the guard against treating a broken/
 #          incomplete inventory scan as genuine mass retraction.
+#    1.11: MANIFEST_MAIN moved to the datamover VM's local volume
+#          (/scratch/ops) — manifests, inventory and all scratch space now
+#          live there instead of on /g/data. Large rewrites over the VM's
+#          NFS mount twice lost a 128 KiB chunk (AUV.csv, ACORN.csv); only
+#          downloaded data now goes over NFS. Logs and scripts stay on
+#          /g/data under OPS_GDATA. Added MANIFEST_BACKUP, the nightly
+#          copy backup_manifests.py keeps on /g/data for Gadi-side tools
+#          and in case the VM volume is lost.
 #
 # ================================================================
 # END_OF_HEADER
@@ -182,8 +190,18 @@ def temp_dir_for_prefix(prefix):
     under — mirrors manifest_dir_for_prefix()."""
     return WAVE_BUOY_TEMP_DIR if is_wave_buoy_prefix(prefix) else TEMP_DIR
 
-# Base directory tree for manifests, downloads, and logs
-MANIFEST_MAIN = "/g/data/sh74/admin/ops/"
+# Pipeline state that gets rewritten in bulk — persistent and temp
+# manifests, the dated inventory and every scratch directory — lives on
+# the datamover VM's local volume, not on /g/data (see VERSION 1.11).
+MANIFEST_MAIN = "/scratch/ops/"
+
+# The /g/data side of ops: logs, deployed scripts and the manifest backup.
+OPS_GDATA = "/g/data/sh74/admin/ops/"
+
+# Nightly copy of every persistent manifest (backup_manifests.py), laid
+# out as <MANIFEST_BACKUP>/<manifest dir name>/<prefix>.csv. Read by
+# Gadi-side tools (prune_scan.pbs), which can't see the VM's volume.
+MANIFEST_BACKUP = os.path.join(OPS_GDATA, "manifest_backup")
 
 # Dated whole-bucket inventory folders (get_imos_manifest.py's output;
 # compare_manifests.py/retract_diff.py's input) live under here, not
@@ -215,7 +233,7 @@ OUTDIR = "/g/data/sh74/admin/incoming"
 # (confirmed: this happened on a real run before this was fixed).
 WAVE_BUOY_OUTDIR = "/g/data/sh74/admin/incoming_wave_buoy"
 
-LOGS_BASE = os.path.join(MANIFEST_MAIN, "logs")
+LOGS_BASE = os.path.join(OPS_GDATA, "logs")
 
 
 def stage_log_path(stage_name, run_id):
@@ -230,8 +248,8 @@ def stage_log_path(stage_name, run_id):
 
 # retract_diff.py's scratch space for per-prefix live-key files — keeps
 # the live inventory off the heap (see retract_diff.py's module docstring
-# for why). Must be on real disk (/g/data), not /tmp — /tmp is commonly
-# tmpfs (RAM-backed) on HPC/VM nodes, which would defeat the purpose.
+# for why). Must be on real disk, not /tmp — /tmp is commonly tmpfs
+# (RAM-backed) on HPC/VM nodes, which would defeat the purpose.
 RETRACT_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_retract_diff")
 
 # Where mv_to_prod lands files — the final, permanent hosting location
@@ -265,10 +283,10 @@ MIN_LIVE_INVENTORY_RATIO = 0.9
 LARGE_PREFIX_ROW_THRESHOLD = 5_000_000
 
 # compare_manifests.py's scratch space for the sort+join diff used on
-# large prefixes. Must be on real disk (/g/data), not /tmp — /tmp is
-# commonly tmpfs (RAM-backed) or size-constrained on HPC/VM nodes, which
-# would defeat the purpose (confirmed empirically: GNU sort ran out of
-# space under /tmp on the datamover VM but succeeded once pointed here).
+# large prefixes. Must be on real disk, not /tmp — /tmp is commonly
+# tmpfs (RAM-backed) or size-constrained on HPC/VM nodes, which would
+# defeat the purpose (confirmed empirically: GNU sort ran out of space
+# under /tmp on the datamover VM).
 COMPARE_SCRATCH_DIR = os.path.join(NCI_MANIFEST, "temp_compare_manifests")
 
 # common.py's dedupe_manifest() scratch space for its disk-based path,

@@ -87,6 +87,12 @@
 #         WAVE_BUOY_OUTDIR via setfacl, per an explicit request. A failure
 #         here is logged but not fatal — it shouldn't undo an otherwise
 #         successful download run.
+#    1.7: A failed dedupe is now reported as its own error ("dedupe
+#         skipped … manifest left as it was") instead of falling into the
+#         merge's "FAILED to merge … temp file left in place" message,
+#         which was wrong by then: the merge had succeeded and the temp
+#         file was already gone. Matters now that the dedupe can refuse a
+#         damaged rewrite (common.py 1.7).
 #
 # ================================================================
 # END_OF_HEADER
@@ -143,10 +149,10 @@ checksum_candidates.append(("ChecksumCRC32", Crc32Checksum))
 
 def _read_temp_manifest_filepaths(path):
     """Read one temp manifest's filepath column fully into a list, retrying
-    the whole read on failure (see common.retry) — this file lives on
-    /g/data mounted over the network onto the datamover VM, where a brief
-    hiccup can surface as a spurious mid-read error (e.g. _csv.Error: line
-    contains NUL). Temp manifests only ever hold one run's newly-queued
+    the whole read on failure (see common.retry) — added while temp
+    manifests lived on /g/data mounted over NFS onto the datamover VM,
+    where a brief hiccup could surface as a spurious mid-read error (e.g.
+    _csv.Error: line contains NUL). Temp manifests only ever hold one run's newly-queued
     files, so materializing the (small) list is not a memory concern."""
     def _read():
         with open(path, newline="") as f:
@@ -238,12 +244,20 @@ def merge_temp_into_persistent(log):
 
                 os.remove(temp_csv)
                 log.info(f"{csv_name}: merged {len(rows)} entrie(s) into persistent manifest, temp file removed")
-
-                dedupe_manifest(persistent_csv, log)
             except Exception as e:
                 highlight(
                     log,
                     f"{csv_name}: FAILED to merge into persistent manifest ({e}) — temp file left in place",
+                    level="error",
+                )
+                continue
+
+            try:
+                dedupe_manifest(persistent_csv, log)
+            except Exception as e:
+                highlight(
+                    log,
+                    f"{csv_name}: dedupe skipped ({e}) — manifest left as it was, duplicates kept until the next run",
                     level="error",
                 )
 

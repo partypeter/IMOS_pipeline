@@ -61,6 +61,13 @@
 #         left comma-containing filepaths unquoted, breaking those rows.
 #         Latent until compare_manifests.py started URL-decoding
 #         inventory keys, which is what first let real commas through.
+#    1.7: Added replace_if_intact(): a rewritten manifest is flushed to
+#         storage, dropped from the page cache and read back before it
+#         replaces the original, and is discarded instead if it contains
+#         NUL bytes or the wrong number of lines. Both dedupe paths use it.
+#         Large writes over the datamover VM's NFS mount twice lost a
+#         128 KiB chunk that read back as zeros (AUV.csv, ACORN.csv), and
+#         the damaged rewrite silently replaced a good manifest each time.
 #
 # ================================================================
 # END_OF_HEADER
@@ -204,6 +211,52 @@ def retry(func, *args, retries=3, delay_seconds=2, **kwargs):
     raise last_exc
 
 
+class WriteCheckError(Exception):
+    """A freshly rewritten file failed replace_if_intact's read-back check."""
+
+
+def replace_if_intact(tmp_path, final_path, expected_lines):
+    """os.replace(tmp_path, final_path), but only once tmp_path has been
+    flushed to storage, dropped from the page cache and read back with no
+    NUL bytes and exactly expected_lines lines. Otherwise tmp_path is
+    removed, final_path is left untouched and WriteCheckError is raised.
+
+    On the datamover VM's NFS mount, large writes have occasionally lost a
+    128 KiB chunk that then reads back as zeros (AUV.csv on 2026-10-02,
+    ACORN.csv on 2026-10-07), with no error reported to the writer. Reading
+    back from storage rather than the cache is what makes that visible."""
+    try:
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            lines = 0
+            has_nul = False
+            while True:
+                chunk = os.read(fd, 16 * 1024 * 1024)
+                if not chunk:
+                    break
+                if b"\x00" in chunk:
+                    has_nul = True
+                    break
+                lines += chunk.count(b"\n")
+        finally:
+            os.close(fd)
+    except BaseException:
+        os.remove(tmp_path)
+        raise
+
+    if has_nul:
+        problem = "contains NUL bytes (part of the write was lost)"
+    elif lines != expected_lines:
+        problem = f"has {lines} lines, expected {expected_lines}"
+    else:
+        os.replace(tmp_path, final_path)
+        return
+    os.remove(tmp_path)
+    raise WriteCheckError(f"{final_path} left unchanged: the rewritten copy {problem}")
+
+
 def read_csv_rows(path, retries=3, delay_seconds=2):
     """Read a CSV file fully into (header, rows), retrying the whole read
     if it fails partway through (e.g. a transient hiccup on a
@@ -269,7 +322,7 @@ def dedupe_manifest(persistent_csv, log):
             if header is not None:
                 writer.writerow(header)
             writer.writerows(deduped)
-        os.replace(tmp_csv, persistent_csv)
+        replace_if_intact(tmp_csv, persistent_csv, len(deduped) + (header is not None))
         log.info(f"{os.path.basename(persistent_csv)}: removed {removed} duplicate entrie(s)")
 
     return removed
@@ -305,21 +358,25 @@ def _dedupe_manifest_large(persistent_csv, row_count, log):
     )
     os.remove(data_only)
 
-    with open(deduped_path) as f:
-        deduped_count = sum(1 for _ in f)
-    removed = row_count - deduped_count
+    try:
+        with open(deduped_path) as f:
+            deduped_count = sum(1 for _ in f)
+        removed = row_count - deduped_count
 
-    if removed:
-        tmp_csv = persistent_csv + ".tmp"
-        with open(tmp_csv, "w", newline="") as f_out:
-            writer = csv.writer(f_out)
-            if header is not None:
-                writer.writerow(header)
-            with open(deduped_path) as f_in:
-                for line in f_in:
-                    writer.writerow(line.rstrip("\n").split("\t"))
-        os.replace(tmp_csv, persistent_csv)
-        log.info(f"{base}: removed {removed} duplicate entrie(s) via disk-based dedup")
-
-    os.remove(deduped_path)
+        if removed:
+            tmp_csv = persistent_csv + ".tmp"
+            with open(tmp_csv, "w", newline="") as f_out:
+                writer = csv.writer(f_out)
+                if header is not None:
+                    writer.writerow(header)
+                with open(deduped_path) as f_in:
+                    for line in f_in:
+                        writer.writerow(line.rstrip("\n").split("\t"))
+            # A chunk lost in either scratch file carries its zeros through
+            # the sort and the rewrite into tmp_csv, so this one check also
+            # covers the scratch writes above.
+            replace_if_intact(tmp_csv, persistent_csv, deduped_count + (header is not None))
+            log.info(f"{base}: removed {removed} duplicate entrie(s) via disk-based dedup")
+    finally:
+        os.remove(deduped_path)
     return removed

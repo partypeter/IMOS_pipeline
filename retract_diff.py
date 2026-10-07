@@ -135,6 +135,10 @@
 #          encoded form, making it look perpetually "still live" and
 #          permanently un-retractable even after the real object was long
 #          gone. Fixes a real retraction blind spot.
+#    1.12: process_manifest's rewritten manifest now goes through
+#          common.replace_if_intact(), so it only replaces the original
+#          once read back from storage with no NUL bytes and the expected
+#          row count (see common.py 1.7).
 #
 # ================================================================
 # END_OF_HEADER
@@ -148,7 +152,7 @@ import sys
 import time
 from urllib.parse import unquote
 
-from common import find_latest_date_dir, highlight, log_move, peak_memory_gb, retry, setup_logging
+from common import find_latest_date_dir, highlight, log_move, peak_memory_gb, replace_if_intact, retry, setup_logging
 from config import (
     AODN_BASE,
     EXCLUDED_PREFIXES,
@@ -272,7 +276,7 @@ def process_manifest(prefix, live_keys, run_datestamp, log):
     persistent_csv = os.path.join(manifest_dir_for_prefix(prefix), f"{prefix}.csv")
     tmp_csv = persistent_csv + ".tmp"
 
-    retracted = 0
+    retracted = kept = 0
     with open(persistent_csv, newline="") as f_in, open(tmp_csv, "w", newline="") as f_out:
         reader = csv.reader(f_in)
         writer = csv.writer(f_out)
@@ -285,12 +289,13 @@ def process_manifest(prefix, live_keys, run_datestamp, log):
             key = row[0]
             if key in live_keys:
                 writer.writerow(row)
+                kept += 1
                 continue
             move_retracted_file(key, run_datestamp, log)
             retracted += 1
 
     if retracted:
-        os.replace(tmp_csv, persistent_csv)
+        replace_if_intact(tmp_csv, persistent_csv, kept + (header is not None))
         log.info(f"{prefix}: {retracted} entrie(s) retracted and removed from persistent manifest")
     else:
         os.remove(tmp_csv)

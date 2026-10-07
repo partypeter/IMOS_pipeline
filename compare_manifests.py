@@ -160,9 +160,9 @@ def get_imos_prefixes(s3):
 
 def load_existing_filepaths(manifest_csv):
     """Retries a transient read failure (see common.read_csv_rows) instead
-    of aborting the whole run outright — this manifest lives on /g/data
-    mounted over the network onto the datamover VM, where a brief hiccup
-    can surface as a spurious mid-read error."""
+    of aborting the whole run outright — added while manifests lived on
+    /g/data mounted over NFS onto the datamover VM, where a brief hiccup
+    could surface as a spurious mid-read error."""
     _, rows = read_csv_rows(manifest_csv)
     return {row[0] for row in rows}
 

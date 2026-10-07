@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Runs the five-stage IMOS onboarding pipeline in order:
+# Runs the six-stage IMOS onboarding pipeline in order:
 #   1. get_imos_manifest.py       - fetch latest S3 inventory manifest
 #   2. compare_manifests.py       - diff inventory against persistent manifests, populate temp_dir
 #   3. download.py                - download new files, merge temp manifests into persistent
@@ -10,6 +10,8 @@
 #                                   other way around: move files retracted upstream out of
 #                                   staging into the outgoing quarantine, and prune old
 #                                   quarantine folders
+#   6. backup_manifests.py        - copy the persistent manifests from the VM's local
+#                                   volume to /g/data (config.py MANIFEST_BACKUP)
 #
 # Each stage must exit 0 before the next one runs. If a stage fails, the
 # pipeline stops immediately and the failure is logged - it will NOT
@@ -44,6 +46,7 @@ COMPARE_MANIFESTS="${SCRIPT_DIR}/compare_manifests.py"
 DOWNLOAD="${SCRIPT_DIR}/download.py"
 MV_TO_PROD_COORDINATOR="${SCRIPT_DIR}/mv_to_prod/coordinator.sh"
 RETRACT_DIFF="${SCRIPT_DIR}/retract_diff.py"
+BACKUP_MANIFESTS="${SCRIPT_DIR}/backup_manifests.py"
 
 PIPELINE_RUN_ID="$(date +%Y%m%d%H%M%S)"
 export PIPELINE_RUN_ID
@@ -83,6 +86,7 @@ run_stage "compare_manifests"    "${PYTHON}"   "${COMPARE_MANIFESTS}"
 run_stage "download"             "${PYTHON}"   "${DOWNLOAD}"
 run_stage "mv_to_prod"           "bash"        "${MV_TO_PROD_COORDINATOR}"
 run_stage "retract_diff"         "${PYTHON}"   "${RETRACT_DIFF}"
+run_stage "backup_manifests"     "${PYTHON}"   "${BACKUP_MANIFESTS}"
 
 log INFO "=== Pipeline run completed successfully (run_id=${PIPELINE_RUN_ID}) ==="
 exit 0
