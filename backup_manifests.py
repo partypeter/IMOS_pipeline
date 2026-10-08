@@ -11,7 +11,7 @@
 #    Stage 6 of the pipeline: copies every persistent manifest from the
 #    datamover VM's local volume (NCI_MANIFEST, WAVE_BUOY_MANIFEST) to
 #    MANIFEST_BACKUP on /g/data, as <MANIFEST_BACKUP>/<dir name>/<prefix>.csv.
-#    The backup is what Gadi-side tools (prune_scan.pbs) read, and what to
+#    The backup is what Gadi-side tools (IMOS-auxiliary repo) read, and what to
 #    restore from if the VM volume is lost.
 #
 #    Each copy is read back from storage before it replaces the previous
