@@ -113,6 +113,9 @@
 #         treated as already tracked, or queued truncated at the comma.
 #         Latent until 1.7: the inventory delivered commas percent-
 #         encoded, so decoded keys are the first to contain real ones.
+#    1.9: Inventory keys ending in "/" are skipped. They're empty S3
+#         "folder marker" objects, not files: download.py would try to
+#         save one as a file at a directory path and crash the stage.
 #
 # ================================================================
 # END_OF_HEADER
@@ -344,6 +347,8 @@ def main():
                     if len(row) < 5:
                         continue
                     key, etag = unquote(row[1]), row[4]
+                    if key.endswith("/"):
+                        continue  # S3 folder marker, not a file (see VERSION 1.9)
 
                     prefix = resolve_prefix(key)
                     if prefix is None or prefix not in valid_prefixes:
