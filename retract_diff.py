@@ -139,6 +139,12 @@
 #          common.replace_if_intact(), so it only replaces the original
 #          once read back from storage with no NUL bytes and the expected
 #          row count (see common.py 1.7).
+#    1.13: Keys ending in "/" (empty S3 "folder marker" objects) are no
+#          longer counted as live, so any already in a persistent manifest
+#          get dropped from it, and move_retracted_file never touches the
+#          disk for one. Its local path is a directory, so a retracted
+#          marker would otherwise have moved that whole directory, files
+#          and all, out of prod.
 #
 # ================================================================
 # END_OF_HEADER
@@ -196,6 +202,8 @@ def stream_inventory_keys_to_scratch(date_dir, scratch_dir, log):
                     if len(row) < 5:
                         continue
                     key = unquote(row[1])
+                    if key.endswith("/"):
+                        continue  # S3 folder marker, not a file (see VERSION 1.13)
                     prefix = resolve_prefix(key)
                     if prefix is None:
                         continue
@@ -254,6 +262,9 @@ def move_retracted_file(key, run_datestamp, log):
     the outgoing quarantine, preserving its key structure. Returns True
     if a file was actually moved, False if nothing was found on disk at
     the expected location."""
+    if key.endswith("/"):
+        log.warning(f"{key}: S3 folder marker, not a file — removing from manifest only")
+        return False
     base = WAVE_BUOY_BASE if is_wave_buoy_key(key) else AODN_BASE
     src = os.path.join(base, key)
     if not os.path.exists(src):
