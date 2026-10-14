@@ -200,7 +200,7 @@ OPS_GDATA = "/g/data/sh74/admin/ops/"
 
 # Nightly copy of every persistent manifest (backup_manifests.py), laid
 # out as <MANIFEST_BACKUP>/<manifest dir name>/<prefix>.csv. Read by
-# Gadi-side tools (IMOS-auxiliary repo), which can't see the VM's volume.
+# Gadi-side tools, which can't see the VM's volume.
 MANIFEST_BACKUP = os.path.join(OPS_GDATA, "manifest_backup")
 
 # Dated whole-bucket inventory folders (get_imos_manifest.py's output;
