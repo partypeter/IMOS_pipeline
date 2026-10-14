@@ -72,9 +72,6 @@ At NCI this runs nightly from cron. Each stage writes its own log to
 `LOGS_BASE/<stage>/<run id>.log`, and a short summary of every stage goes to
 `LOGS_BASE/pipeline/<run id>.log`.
 
-Maintenance tools that are not part of the nightly run live in a separate
-repository, [IMOS-auxiliary](https://github.com/partypeter/IMOS-auxiliary).
-
 ## Limitations
 
 - A file is only downloaded once. If an object is later replaced upstream
