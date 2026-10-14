@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "IMOS_pipeline: nightly mirror of the IMOS/AODN S3 data bucket to NCI"
+abstract: >-
+  A nightly pipeline that mirrors the public IMOS/AODN data bucket on AWS S3
+  (s3://imos-data) to the National Computational Infrastructure (NCI),
+  Australia, driven by the bucket's daily S3 Inventory.
+type: software
+authors:
+  - family-names: Hollmann
+    given-names: Hannes
+    affiliation: "National Computational Infrastructure, The Australian National University"
+repository-code: "https://github.com/partypeter/IMOS_pipeline"
+license: GPL-3.0-only
+date-released: "2026-10-14"
+keywords:
+  - IMOS
+  - AODN
+  - NCI
+  - data mirroring
+  - AWS S3

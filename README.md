@@ -85,4 +85,5 @@ repository, [IMOS-auxiliary](https://github.com/partypeter/IMOS-auxiliary).
 ## Author and license
 
 Hannes Hollmann, National Computational Infrastructure (NCI), Australia.
-Released under the GNU General Public License.
+Released under the GNU General Public License v3.0 (see `LICENSE`). To cite this
+software, see `CITATION.cff` or GitHub's "Cite this repository" button.
